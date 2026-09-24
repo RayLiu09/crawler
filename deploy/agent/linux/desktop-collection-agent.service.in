@@ -1,0 +1,21 @@
+[Unit]
+Description=Job Collection Desktop Agent
+Documentation="file://@RUNBOOK@"
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment="AGENT_CONFIG_FILE=@CONFIG_FILE@"
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+ExecStart="@EXECUTABLE@"
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=180s
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+# The visible browser requires the dedicated user's graphical session.
+# Do not install this unit as a system service or enable user lingering.

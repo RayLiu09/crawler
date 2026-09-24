@@ -1,0 +1,1255 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>岗位数据采集引擎技术实现讨论稿</title>
+  <style>
+    :root {
+      --ink: #202124;
+      --muted: #5f6368;
+      --line: #d7d9dd;
+      --soft: #f6f7f8;
+      --paper: #ffffff;
+      --accent: #0b57d0;
+      --accent-soft: #e8f0fe;
+      --green: #137333;
+      --green-soft: #e6f4ea;
+      --amber: #8a4f00;
+      --amber-soft: #fef7e0;
+      --red: #b3261e;
+      --red-soft: #fce8e6;
+      --charcoal: #303134;
+      --code: #f1f3f4;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      letter-spacing: 0;
+    }
+
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { padding: 1px 5px; border-radius: 3px; background: var(--code); font-size: .92em; }
+
+    .topbar {
+      border-bottom: 1px solid #47484b;
+      background: var(--charcoal);
+      color: #fff;
+    }
+
+    .topbar-inner, .layout, .title-inner {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .topbar-inner {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      font-size: 13px;
+    }
+
+    .doc-mark { font-weight: 700; }
+    .doc-meta { color: #d7d9dd; white-space: nowrap; }
+
+    .title-band { border-bottom: 1px solid var(--line); background: var(--soft); }
+    .title-inner { padding: 28px 0 26px; }
+
+    h1, h2, h3 { margin: 0; color: var(--ink); font-weight: 700; letter-spacing: 0; }
+    h1 { max-width: 900px; font-size: 30px; line-height: 1.28; }
+    h2 { margin-bottom: 16px; font-size: 22px; line-height: 1.35; }
+    h3 { margin-bottom: 10px; font-size: 16px; line-height: 1.4; }
+
+    .subtitle { max-width: 980px; margin: 10px 0 0; color: var(--muted); font-size: 16px; }
+
+    .decision-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .decision-item { min-width: 0; padding: 12px 14px; background: #fff; }
+    .decision-label { color: var(--muted); font-size: 12px; }
+    .decision-value { margin-top: 2px; font-weight: 700; overflow-wrap: anywhere; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 42px;
+      align-items: start;
+      padding: 30px 0 80px;
+    }
+
+    nav {
+      position: sticky;
+      top: 20px;
+      padding-right: 20px;
+      border-right: 1px solid var(--line);
+    }
+
+    nav strong { display: block; margin-bottom: 9px; font-size: 13px; }
+    nav a { display: block; padding: 5px 0; color: var(--muted); font-size: 13px; text-decoration: none; }
+    nav a:hover { color: var(--accent); }
+
+    main { min-width: 0; }
+    section { padding: 6px 0 38px; scroll-margin-top: 20px; }
+    section + section { padding-top: 34px; border-top: 1px solid var(--line); }
+    p { margin: 0 0 13px; }
+    ul, ol { margin: 10px 0 0; padding-left: 22px; }
+    li + li { margin-top: 5px; }
+
+    .callout {
+      margin: 16px 0;
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .callout.warning { border-left-color: #e37400; background: var(--amber-soft); }
+    .callout strong { display: block; margin-bottom: 2px; }
+
+    .scope-grid, .component-grid, .db-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .scope-box, .component, .db-card {
+      min-width: 0;
+      padding: 15px 16px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .scope-box.in { border-top: 4px solid var(--green); }
+    .scope-box.out { border-top: 4px solid var(--red); }
+    .scope-box ul { color: var(--muted); }
+
+    .architecture {
+      margin-top: 18px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      overflow-x: auto;
+    }
+
+    .deployment-canvas {
+      min-width: 940px;
+      display: grid;
+      grid-template-columns: minmax(190px, .85fr) 78px minmax(520px, 2.25fr);
+      align-items: stretch;
+      gap: 12px;
+    }
+
+    .runtime-party {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 168px;
+      padding: 16px;
+      border: 2px solid var(--charcoal);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .runtime-party.agent { border-color: var(--green); }
+    .runtime-party.site { border-color: #8a4f00; }
+    .runtime-party strong { margin-bottom: 6px; font-size: 16px; }
+    .runtime-party span { color: var(--muted); font-size: 13px; }
+
+    .runtime-link {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .runtime-link b { font-size: 25px; line-height: 1.2; }
+
+    .server-host {
+      padding: 14px;
+      border: 2px solid var(--charcoal);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .host-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 11px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .host-title span { color: var(--muted); font-weight: 400; }
+
+    .container-row {
+      display: grid;
+      grid-template-columns: minmax(320px, 1.55fr) 58px minmax(190px, .85fr);
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .runtime-container {
+      min-width: 0;
+      padding: 12px;
+      border: 2px solid var(--accent);
+      border-radius: 5px;
+      background: var(--accent-soft);
+    }
+
+    .runtime-container.database { border-color: #6f42c1; background: #f3effb; }
+    .container-title { margin-bottom: 9px; font-weight: 800; font-size: 14px; }
+    .container-title small { display: block; color: var(--muted); font-weight: 400; }
+
+    .component-stack {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .runtime-component {
+      min-width: 0;
+      padding: 8px 9px;
+      border: 1px solid #a8c7fa;
+      border-radius: 4px;
+      background: #fff;
+      font-size: 12px;
+    }
+
+    .runtime-component strong { display: block; color: #0842a0; }
+    .runtime-component span { display: block; color: var(--muted); overflow-wrap: anywhere; }
+    .database .runtime-component { border-color: #c8b5e8; }
+    .database .runtime-component strong { color: #5b3592; }
+
+    .agent-runtime {
+      width: calc(100% - 280px);
+      min-width: 660px;
+      margin: 14px 0 0 280px;
+    }
+
+    .agent-control-link, .site-control-link {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 70px;
+      color: var(--green);
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .agent-control-link b, .site-control-link b { font-size: 26px; line-height: 1; }
+
+    .agent-cluster {
+      padding: 13px;
+      border: 2px dashed var(--green);
+      border-radius: 6px;
+      background: #f4fbf6;
+    }
+
+    .agent-cluster-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+      color: var(--green);
+      font-weight: 800;
+    }
+
+    .agent-cluster-title span { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .agent-grid { display: grid; grid-template-columns: repeat(3, minmax(190px, 1fr)); gap: 9px; }
+
+    .agent-host {
+      min-width: 0;
+      padding: 13px;
+      border: 2px solid var(--green);
+      border-radius: 6px;
+      background: var(--green-soft);
+    }
+
+    .agent-host-title { display: block; color: var(--green); font-size: 14px; }
+    .agent-host-meta { display: block; color: var(--muted); font-size: 11px; }
+    .agent-processes { display: grid; gap: 6px; margin-top: 8px; }
+    .agent-process { padding: 7px 9px; border: 1px solid #8cc99b; border-radius: 4px; background: #fff; font-size: 12px; }
+    .agent-process strong { display: block; color: var(--green); }
+    .agent-process span { color: var(--muted); }
+
+    .site-control-link { color: var(--amber); }
+    .site-runtime { min-height: 112px; }
+
+    .network-note {
+      margin-top: 12px;
+      padding: 9px 11px;
+      border: 1px dashed #7b8087;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin: 0 6px 3px 0; background: var(--charcoal); }
+    .legend .api-key::before { background: var(--accent); }
+    .legend .agent-key::before { background: var(--green); }
+
+    .flow-map { margin-top: 18px; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .flow-step {
+      position: relative;
+      min-height: 154px;
+      padding: 43px 14px 14px;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--accent);
+      background: #fff;
+    }
+
+    .flow-step::before {
+      content: attr(data-step);
+      position: absolute;
+      top: 10px;
+      left: 14px;
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .flow-step strong { display: block; margin-bottom: 5px; }
+    .flow-step span { color: var(--muted); font-size: 13px; }
+
+    .flow-branch-zone {
+      margin-top: 16px;
+      padding: 14px;
+      border: 2px dashed #c56a00;
+      background: #fffdf7;
+    }
+
+    .flow-branch-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 11px;
+    }
+
+    .flow-branch-heading strong { color: var(--amber); font-size: 15px; }
+    .flow-branch-heading span { color: var(--muted); font-size: 12px; }
+    .flow-branch-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+    .flow-step.branch { min-height: 166px; }
+    .flow-step.branch::before { color: var(--amber); }
+    .flow-step.branch-control { border-color: #e37400; background: var(--amber-soft); }
+    .flow-step.branch-human { border-color: #6f42c1; background: #f3effb; }
+    .flow-step.branch-human::before { color: #5b3592; }
+    .flow-step.branch-recovery { border-color: var(--red); background: var(--red-soft); }
+    .flow-step.branch-recovery::before { color: var(--red); }
+
+    .branch-label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .state-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 7px;
+      margin: 14px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .state { padding: 4px 9px; border: 1px solid #9aa0a6; border-radius: 4px; background: #fff; font-family: monospace; font-size: 12px; }
+    .state.active { border-color: var(--accent); color: var(--accent); }
+    .state.wait { border-color: #e37400; color: var(--amber); }
+    .state.end { border-color: var(--green); color: var(--green); }
+    .state-arrow { color: var(--muted); }
+
+    table { width: 100%; margin: 14px 0 20px; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+    th { background: var(--soft); font-weight: 700; }
+    tbody tr:nth-child(even) td { background: #fbfbfc; }
+
+    .db-card { padding: 0; overflow: hidden; }
+    .db-card h3 { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--charcoal); color: #fff; font-family: monospace; font-size: 14px; }
+    .db-card p { margin: 0; padding: 11px 14px; color: var(--muted); font-size: 13px; }
+    .db-card dl { display: grid; grid-template-columns: 42% 58%; margin: 0; border-top: 1px solid var(--line); font-size: 12px; }
+    .db-card dt, .db-card dd { margin: 0; padding: 7px 10px; border-bottom: 1px solid #e7e8ea; overflow-wrap: anywhere; }
+    .db-card dt { background: var(--soft); font-family: monospace; font-weight: 700; }
+
+    .relation-map { margin: 16px 0; padding: 18px; border: 1px solid var(--line); background: var(--soft); text-align: center; overflow-x: auto; }
+    .relation-code { min-width: 690px; display: inline-block; text-align: left; white-space: pre; font: 13px/1.75 monospace; }
+
+    pre {
+      margin: 14px 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--code);
+      overflow: auto;
+      color: #242629;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .api-group { margin-top: 16px; }
+    .endpoint { display: grid; grid-template-columns: 74px minmax(250px, 360px) 1fr; border-top: 1px solid var(--line); }
+    .endpoint:last-child { border-bottom: 1px solid var(--line); }
+    .endpoint > * { padding: 9px 10px; }
+    .method { color: var(--accent); font-weight: 800; font-family: monospace; }
+    .path { font-family: monospace; overflow-wrap: anywhere; }
+    .endpoint-note { color: var(--muted); }
+
+    .rule-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .rule { padding: 12px 14px; border-left: 3px solid var(--charcoal); background: var(--soft); }
+    .rule strong { display: block; }
+    .rule span { color: var(--muted); font-size: 13px; }
+
+    .footer { padding: 22px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; padding: 0 0 18px; border-right: 0; border-bottom: 1px solid var(--line); columns: 2; }
+      nav strong { column-span: all; }
+      .decision-strip, .flow, .flow-branch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .topbar-inner, .layout, .title-inner { width: min(100% - 24px, 1440px); }
+      .topbar-inner { align-items: flex-start; flex-direction: column; justify-content: center; gap: 0; padding: 8px 0; }
+      h1 { font-size: 25px; }
+      .decision-strip, .scope-grid, .component-grid, .db-grid, .flow, .flow-branch-grid, .rule-list { grid-template-columns: 1fr; }
+      .flow-branch-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
+      .endpoint { grid-template-columns: 66px 1fr; }
+      .endpoint-note { grid-column: 1 / -1; padding-top: 0; }
+      nav { columns: 1; }
+    }
+
+    @media print {
+      nav { display: none; }
+      .layout { display: block; width: 100%; padding-top: 20px; }
+      .topbar { background: #fff; color: #000; border-bottom: 1px solid #000; }
+      .doc-meta { color: #333; }
+      section { break-inside: avoid; }
+      .architecture, .relation-map, .flow-step, .db-card { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="doc-mark">ENGINE DESIGN / 技术实现讨论稿</div>
+      <div class="doc-meta">版本 0.4 · 2026-09-17 · 状态：待评审</div>
+    </div>
+  </header>
+
+  <div class="title-band">
+    <div class="title-inner">
+      <h1>岗位数据采集引擎技术实现讨论稿</h1>
+      <p class="subtitle">从现有业务平台抽取独立、业务无关的岗位需求数据采集能力，采用容器化控制 API 与执行机桌面采集 Agent 分离架构。</p>
+      <div class="decision-strip" aria-label="核心技术决策">
+        <div class="decision-item"><div class="decision-label">控制面</div><div class="decision-value">FastAPI 单容器</div></div>
+        <div class="decision-item"><div class="decision-label">执行面</div><div class="decision-value">桌面 Agent + Selenium</div></div>
+        <div class="decision-item"><div class="decision-label">生产持久化</div><div class="decision-value">同主机独立 PostgreSQL 容器</div></div>
+        <div class="decision-item"><div class="decision-label">内容数据</div><div class="decision-value">仅解析后原始岗位记录</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav aria-label="文档目录">
+      <strong>目录</strong>
+      <a href="#goals">01 目标与边界</a>
+      <a href="#architecture">02 系统边界架构图</a>
+      <a href="#components">03 组件职责</a>
+      <a href="#flow">04 数据采集处理流程</a>
+      <a href="#state">05 任务状态与控制</a>
+      <a href="#storage">06 数据存储边界</a>
+      <a href="#database">07 核心数据库表</a>
+      <a href="#api">08 API 与 Agent 协议</a>
+      <a href="#structure">09 项目结构</a>
+      <a href="#naming">10 命名约定</a>
+      <a href="#deployment">11 部署与安全</a>
+      <a href="#verification">12 实现与验收</a>
+    </nav>
+
+    <main>
+      <section id="goals">
+        <h2>01. 目标与边界</h2>
+        <p>本项目产出一个独立岗位需求数据采集引擎。调用方提交来源、关键词、地区和页数等通用采集条件；引擎异步完成任务调度、桌面 Agent 执行、记录接收和结果交付。</p>
+        <div class="scope-grid">
+          <div class="scope-box in">
+            <h3>引擎范围内</h3>
+            <ul>
+              <li>采集作业创建、查询、暂停、恢复和取消</li>
+              <li>Agent 独立身份认证、能力发现、租约和故障恢复</li>
+              <li>招聘来源适配、页面解析和人工验证协作</li>
+              <li>解析后原始岗位记录的幂等存储与分页交付</li>
+              <li>状态事件、操作审计和可靠 webhook 通知</li>
+            </ul>
+          </div>
+          <div class="scope-box out">
+            <h3>明确不在范围内</h3>
+            <ul>
+              <li>任何现有或未来上游系统的适配代码</li>
+              <li>项目、专业、培养方案和关键词生成规则</li>
+              <li>岗位主数据合并、跨来源标准化和业务分析</li>
+              <li>原始 HTML、截图、Cookie 和浏览器 Profile 存储</li>
+              <li>验证码自动绕过及招聘网站账号托管</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>数据边界解释</strong>
+          “只存储解析后的原始岗位数据”约束岗位内容，不表示可以删除任务运行元数据。异步任务要支持重启恢复、暂停和取消，仍必须保存作业、子任务、租约、Agent、事件和 Outbox 状态。
+        </div>
+        <table>
+          <thead><tr><th>安全主体</th><th>初始信任来源</th><th>数据库身份</th><th>短期凭证</th><th>可访问接口</th></tr></thead>
+          <tbody>
+            <tr><td>上层调用方</td><td>控制中心 tenantKey 配置白名单</td><td>api_clients</td><td>api_access_tokens</td><td>/v1/auth/*、/v1/collection-jobs/*</td></tr>
+            <tr><td>执行机 Agent</td><td>控制中心侧 provisioning CLI 在安装前预置唯一设备身份；不使用 tenantKey</td><td>collection_agents</td><td>agent_sessions</td><td>/v1/agent/*</td></tr>
+          </tbody>
+        </table>
+        <div class="callout warning">
+          <strong>身份域不可互换</strong>
+          Agent 不是调用方，不注册进 <code>api_clients</code>，不能申请或使用调用方 Token；上层调用方也不能使用 Agent 会话领取任务。Agent 不归属于任何 tenant，也不会接收 tenantId。租户隔离由控制中心依据 <code>collection_job.client_id</code> 完成，Agent 只负责被租约授权的任务。
+        </div>
+      </section>
+
+      <section id="architecture">
+        <h2>02. 系统边界架构图</h2>
+        <p>生产环境的控制中心服务器运行 <code>crawler-api</code> 和 PostgreSQL 两个独立 Docker 容器。只有 API 容器向业务网络暴露端口；PostgreSQL 容器只加入服务器内部 Docker 网络，不发布宿主机端口。开发环境可复用既有外部 PostgreSQL，不改变生产部署边界。多台桌面 Agent 执行机通过出站 HTTPS 使用同一控制面，组成无 tenant 绑定的全局执行资源池。</p>
+        <div class="architecture" role="img" aria-label="生产环境控制中心服务器内的 crawler-api 与 PostgreSQL 容器，以及下方三个桌面 Agent 节点的运行时部署架构">
+          <div class="deployment-canvas">
+            <div class="runtime-party">
+              <strong>授信上层应用</strong>
+              <span>tenantKey 申请访问 Token</span>
+              <span>配置 collection-jobs 地址，并为每个 Job 签发短期 Callback Token</span>
+              <span>提交、控制和查询采集作业</span>
+              <span>分页读取解析后岗位记录</span>
+            </div>
+            <div class="runtime-link">公网或业务网 HTTPS<b>⇄</b>调用控制中心：Caller Token<br>控制中心回调上游：内网 HTTP 或 HTTPS · Job Callback Token</div>
+            <div class="server-host">
+              <div class="host-title">生产控制中心服务器 <span>同一台物理机或虚拟机</span></div>
+              <div class="container-row">
+                <div class="runtime-container">
+                  <div class="container-title">crawler-api 容器 <small>纯 API、无管理 GUI · FastAPI / Uvicorn</small></div>
+                  <div class="component-stack">
+                    <div class="runtime-component"><strong>Auth Gateway</strong><span>tenantKey 白名单校验、Token 签发与鉴权</span></div>
+                    <div class="runtime-component"><strong>Public API</strong><span>作业、控制、结果和事件接口</span></div>
+                    <div class="runtime-component"><strong>Agent API</strong><span>设备会话、全局任务领取、心跳和数据接收</span></div>
+                    <div class="runtime-component"><strong>Application / Domain</strong><span>用例编排、状态机和租约策略</span></div>
+                    <div class="runtime-component"><strong>Lease Recovery</strong><span>过期租约扫描与 fencing token</span></div>
+                    <div class="runtime-component"><strong>Webhook Dispatcher</strong><span>Outbox 读取、短期 Token 鉴权与重试</span></div>
+                    <div class="runtime-component"><strong>Repository / UoW</strong><span>事务、行锁、幂等和游标查询</span></div>
+                    <div class="runtime-component"><strong>Configuration</strong><span>tenantKey 白名单及运行参数</span></div>
+                  </div>
+                </div>
+                <div class="runtime-link">Docker bridge<b>⇄</b>TCP 5432<br>生产内部链路</div>
+                <div class="runtime-container database">
+                  <div class="container-title">PostgreSQL 18.1 容器 <small>生产部署 · 不发布宿主机端口</small></div>
+                  <div class="component-stack" style="grid-template-columns: 1fr">
+                    <div class="runtime-component"><strong>crawler schema</strong><span>身份、Token 哈希和运行状态</span></div>
+                    <div class="runtime-component"><strong>task state</strong><span>作业、任务、执行尝试、租约和事件</span></div>
+                    <div class="runtime-component"><strong>parsed records</strong><span>解析后的原始岗位数据</span></div>
+                    <div class="runtime-component"><strong>persistent volume</strong><span>挂载 /var/lib/postgresql（PostgreSQL 18+）</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="network-note">生产网络边界：<code>crawler-api:8080</code> 经反向代理暴露；<code>postgres:5432</code> 仅在专用 Docker network 内可达。开发环境 API 则按 <code>POSTGRES_*</code> 配置连接既有数据库。</div>
+            </div>
+          </div>
+
+          <div class="agent-runtime">
+            <div class="agent-control-link"><span>crawler-api / Agent API</span><b>↕</b><span>各节点主动建立出站 HTTPS · Agent Token</span></div>
+            <div class="agent-cluster">
+              <div class="agent-cluster-title">执行机桌面 Agent 集群 <span>全局执行资源池 · 无 tenant 绑定 · 可横向扩展</span></div>
+              <div class="agent-grid">
+                <div class="agent-host">
+                  <strong class="agent-host-title">Agent Node 01</strong><span class="agent-host-meta">独立 agentId + deviceSecret</span>
+                  <div class="agent-processes">
+                    <div class="agent-process"><strong>Agent Supervisor</strong><span>心跳、控制与进程回收</span></div>
+                    <div class="agent-process"><strong>Local SQLite Spool</strong><span>未确认记录与检查点</span></div>
+                    <div class="agent-process"><strong>Selenium 子进程</strong><span>Source Adapter + 可见 Chrome</span></div>
+                    <div class="agent-process"><strong>Browser Profile</strong><span>本机 Cookie 与登录态</span></div>
+                  </div>
+                </div>
+                <div class="agent-host">
+                  <strong class="agent-host-title">Agent Node 02</strong><span class="agent-host-meta">独立 agentId + deviceSecret</span>
+                  <div class="agent-processes">
+                    <div class="agent-process"><strong>Agent Supervisor</strong><span>心跳、控制与进程回收</span></div>
+                    <div class="agent-process"><strong>Local SQLite Spool</strong><span>未确认记录与检查点</span></div>
+                    <div class="agent-process"><strong>Selenium 子进程</strong><span>Source Adapter + 可见 Chrome</span></div>
+                    <div class="agent-process"><strong>Browser Profile</strong><span>本机 Cookie 与登录态</span></div>
+                  </div>
+                </div>
+                <div class="agent-host">
+                  <strong class="agent-host-title">Agent Node N</strong><span class="agent-host-meta">按容量继续横向扩展</span>
+                  <div class="agent-processes">
+                    <div class="agent-process"><strong>Agent Supervisor</strong><span>心跳、控制与进程回收</span></div>
+                    <div class="agent-process"><strong>Local SQLite Spool</strong><span>未确认记录与检查点</span></div>
+                    <div class="agent-process"><strong>Selenium 子进程</strong><span>Source Adapter + 可见 Chrome</span></div>
+                    <div class="agent-process"><strong>Browser Profile</strong><span>本机 Cookie 与登录态</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="site-control-link"><span>各节点桌面浏览器</span><b>↕</b><span>HTTPS</span></div>
+            <div class="runtime-party site site-runtime">
+              <strong>招聘网站</strong>
+              <span>列表页、详情页、登录页和安全验证页</span>
+              <span>页面差异由各节点上的 Source Adapter 隔离</span>
+            </div>
+          </div>
+          <div class="legend"><span>外部参与方</span><span class="api-key">API 控制面及内部组件</span><span class="agent-key">桌面执行面</span></div>
+        </div>
+        <div class="callout warning">
+          <strong>硬性边界</strong>
+          `crawler-api` 不反向查询调用方业务数据；桌面 Agent 不直接连接 PostgreSQL，不接收租户和调用方信息；PostgreSQL 不对服务器外部开放；调用方不能指定浏览器路径、Cookie 或具体执行机进程。
+        </div>
+      </section>
+
+      <section id="components">
+        <h2>03. 组件职责</h2>
+        <div class="component-grid">
+          <article class="component"><h3>Auth Gateway</h3><p>依据配置白名单验证 tenantKey，签发随机访问 Token，并按数据库中的 Token 状态完成每次请求鉴权。</p></article>
+          <article class="component"><h3>Public API</h3><p>使用 Bearer Token 识别租户、幂等创建作业、执行状态控制、提供游标分页结果和事件查询。</p></article>
+          <article class="component"><h3>Agent API</h3><p>验证受控安装过程预置的设备身份并签发 Agent 会话，在全局任务池中完成能力匹配、原子领取、续租、检查点和解析记录接收；不接受 tenantKey 或 tenantId。</p></article>
+          <article class="component"><h3>Collection Domain</h3><p>维护 desired state 与 actual state、合法状态转换、任务汇总和恢复策略。</p></article>
+          <article class="component"><h3>Lease Coordinator</h3><p>使用 PostgreSQL 行锁分配任务，通过 lease token 与 fencing token 拒绝迟到写入。</p></article>
+          <article class="component"><h3>Desktop Agent</h3><p>以主进程维持心跳，以受监督子进程运行 Selenium；断网时暂存待确认记录。</p></article>
+          <article class="component"><h3>Source Adapter</h3><p>封装来源 URL、选择器、登录检测和字段提取，不导入 API 仓储或上游模型。</p></article>
+          <article class="component"><h3>Parsed Record Store</h3><p>追加保存从列表页和详情页解析出的来源事实；只做确定性去重，不构建岗位主数据。</p></article>
+          <article class="component"><h3>Webhook Outbox</h3><p>与状态变更同事务写入事件，异步使用该 Job 的短期 Callback Token 访问上游回调 API；调用方按 event ID 去重。Token 一次签发、限定单 Job/单接口，在有效期内允许幂等重试。</p></article>
+        </div>
+      </section>
+
+      <section id="flow">
+        <h2>04. 数据采集处理流程</h2>
+        <p>调用方先完成 tenantKey 换取访问 Token，再提交异步作业。HTTP 请求只创建持久化作业，不等待 Selenium；任务事实、租约和记录确认都以 PostgreSQL 为准。01 至 11 是正常完成路径，12 至 14 是执行期间按条件进入的分支，不是依次必经步骤。</p>
+        <div class="flow-map">
+          <div class="flow" aria-label="数据采集主干流程">
+            <div class="flow-step" data-step="01"><strong>申请访问 Token</strong><span>调用方提交 tenantKey；Auth Gateway 校验配置白名单，持久化 Token 哈希并将明文 Token 返回一次。</span></div>
+            <div class="flow-step" data-step="02"><strong>提交采集作业</strong><span>调用方使用 Caller Token，并在请求体随 callback URL 提交单 Job 短期 Callback Token 和 expiresAt；控制面保存 Token ciphertext 与本地 fingerprint，返回 202 与 collectionJobId。</span></div>
+            <div class="flow-step" data-step="03"><strong>拆分采集任务</strong><span>API 按查询条件创建 collection_tasks，冻结请求快照，不再依赖调用方在线。</span></div>
+            <div class="flow-step" data-step="04"><strong>Agent 能力与 Profile 同步</strong><span>已认证 Agent 心跳上报版本化 capabilities、动态空闲槽和本机 Profile 元数据；API 先完成校验与 upsert，再在全局任务池使用 SKIP LOCKED 原子领取，不向 Agent 暴露租户信息。</span></div>
+            <div class="flow-step" data-step="05"><strong>建立执行租约</strong><span>API 返回 leaseToken、fencingToken 和过期时间；Agent 独立心跳线程持续续租。</span></div>
+            <div class="flow-step" data-step="06"><strong>桌面浏览器采集</strong><span>来源 Adapter 打开列表及详情页，在页级和记录级安全点读取控制信号。</span></div>
+            <div class="flow-step" data-step="07"><strong>解析与本地暂存</strong><span>DOM 被解析为 ParsedJobRecord；Agent spool 保存未被 API 确认的批次，不保存 HTML。</span></div>
+            <div class="flow-step" data-step="08"><strong>幂等批量写入</strong><span>API 校验租约和哈希，使用唯一键忽略重复记录，并确认 acceptedRecordIds。</span></div>
+            <div class="flow-step" data-step="09"><strong>循环采集与检查点</strong><span>每页记录确认后更新 pageCheckpoint；未达到 pageLimit 时继续导航，避免恢复后遗漏或重复推进。</span></div>
+            <div class="flow-step" data-step="10"><strong>完成与汇总</strong><span>Agent 提交任务终态；API 汇总所有子任务并生成 succeeded、partial 或 failed。</span></div>
+            <div class="flow-step" data-step="11"><strong>结果交付</strong><span>Dispatcher 解密该 Job 的有效 Callback Token，通过 Authorization: Bearer 投递事件；上游按 event ID 幂等处理，岗位明细仍通过稳定游标分页获取。</span></div>
+          </div>
+          <div class="flow-branch-zone" aria-label="数据采集条件分支流程">
+            <div class="flow-branch-heading"><strong>条件分支 12-14</strong><span>从执行阶段按控制信号、页面状态或租约状态进入；处理后返回主干、保持暂停或终止。</span></div>
+            <div class="flow-branch-grid">
+              <div class="flow-step branch branch-control" data-step="12"><small class="branch-label">控制分支</small><strong>暂停处理</strong><span>Agent 停止新导航、清空 spool、保存 pageCheckpoint、关闭浏览器并释放租约。</span></div>
+              <div class="flow-step branch branch-human" data-step="13"><small class="branch-label">人工介入分支</small><strong>人工验证</strong><span>检测到登录或验证页时进入 awaiting_human；执行机操作同一浏览器后自动继续。</span></div>
+              <div class="flow-step branch branch-recovery" data-step="14"><small class="branch-label">异常恢复分支</small><strong>故障恢复</strong><span>租约到期后依据 desiredState 决定重排队、保持暂停或取消，旧 fencingToken 失效。</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="state">
+        <h2>05. 任务状态与控制</h2>
+        <p>作业和子任务均保存 <code>desired_state</code> 与 <code>status</code>。前者表达控制意图，后者表达执行事实。</p>
+        <div class="state-line" aria-label="主任务状态流">
+          <span class="state">queued</span><span class="state-arrow">→</span><span class="state active">running</span><span class="state-arrow">→</span><span class="state end">succeeded / partially_succeeded / failed</span>
+        </div>
+        <div class="state-line" aria-label="暂停状态流">
+          <span class="state active">running</span><span class="state-arrow">→</span><span class="state wait">pausing</span><span class="state-arrow">→</span><span class="state wait">paused</span><span class="state-arrow">→</span><span class="state">queued</span>
+        </div>
+        <div class="state-line" aria-label="取消和人工处理状态流">
+          <span class="state active">running</span><span class="state-arrow">→</span><span class="state wait">awaiting_human</span><span class="state-arrow">→</span><span class="state active">running</span><span class="state-arrow">或</span><span class="state wait">cancelling</span><span class="state-arrow">→</span><span class="state end">cancelled</span>
+        </div>
+        <table>
+          <thead><tr><th>场景</th><th>中心端处理</th><th>Agent 处理</th><th>最终状态</th></tr></thead>
+          <tbody>
+            <tr><td>暂停</td><td>queued 任务立即变为 paused；活动任务设置 desired_state=paused 并进入 pausing，不清除租约</td><td>完成安全检查点、确认上传、关闭浏览器、释放租约</td><td>所有未终态任务确认后为 paused</td></tr>
+            <tr><td>恢复</td><td>仅 status=paused 时接受；paused 任务恢复 queued，保留检查点；重复 resume 为无版本变化的幂等返回</td><td>重新领取并从 page_checkpoint 继续</td><td>queued，领取后 running</td></tr>
+            <tr><td>取消</td><td>queued/paused 立即 cancelled；活动任务进入 cancelling，不提前作废运行任务写权限或清租约</td><td>协作退出；超时后由 Supervisor 终止子进程树</td><td>所有活动任务确认后为 cancelled</td></tr>
+            <tr><td>Agent 失联</td><td>租约到期并递增 fencing_token</td><td>重连后旧租约写入得到 409</td><td>依 desired_state 决定</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="storage">
+        <h2>06. 数据存储边界</h2>
+        <table>
+          <thead><tr><th>数据类别</th><th>中心 PostgreSQL</th><th>执行机本地</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>解析后岗位字段</td><td>保存</td><td>未确认批次临时保存</td><td>来源页面可见事实，不做业务推断</td></tr>
+            <tr><td>作业、任务、租约和事件</td><td>保存</td><td>仅保存当前执行引用</td><td>支持异步控制与恢复的运行元数据</td></tr>
+            <tr><td>单 Job Callback Token</td><td>专用 Job 回调配置保存 AEAD ciphertext、nonce、过期时间和本地 HMAC fingerprint</td><td>不保存</td><td>Dispatcher 只在投递时短暂解密；不得进入请求快照、事件、Outbox、响应、异常或日志</td></tr>
+            <tr><td>HTML、DOM、截图、HAR</td><td>不保存</td><td>默认不保存</td><td>失败诊断如需临时采样，必须另行评审</td></tr>
+            <tr><td>Cookie 与 Browser Profile</td><td>不保存</td><td>持久保存于受控目录</td><td>按来源账号隔离，同一时间单进程占用</td></tr>
+            <tr><td>标准化、分类和分析结果</td><td>不保存</td><td>不保存</td><td>由调用方在引擎边界外处理</td></tr>
+          </tbody>
+        </table>
+        <p>允许的数据处理限于文本抽取、首尾空白清理、编码修复、长度限制、来源岗位 ID 提取、URL 规范化和确定性哈希。薪资换算、技能推断、相关性判断及跨来源合并均不属于采集引擎。</p>
+      </section>
+
+      <section id="database">
+        <h2>07. 核心数据库表及其说明</h2>
+        <p>生产环境 PostgreSQL 与 API 部署在同一控制中心服务器的独立 Docker 容器中，使用持久卷保存数据；开发环境使用既有外部 PostgreSQL 数据库。两种环境均由 Alembic 管理相同的 <code>crawler</code> schema。岗位记录采用追加写，运行状态采用条件更新和乐观版本控制。</p>
+        <div class="relation-map" role="img" aria-label="核心数据库表关系">
+          <div class="relation-code">api_clients 1 ─── n api_access_tokens
+      │
+      └── n collection_jobs 1 ─── n collection_tasks 1 ─── n parsed_job_records
+                │                         │
+                ├── n collection_events  └── n collection_task_attempts n ─── 1 collection_agents
+                │       │
+                │       └── n webhook_outbox n ─── 1 collection_job_callback_configs
+                │                  └── 1 ─── n webhook_outbox_replays
+                └── 0..1 collection_job_callback_configs 1 ─── n collection_job_callback_credential_rotations
+
+collection_agents 1 ─── n agent_sessions
+        │
+        ├── n browser_profiles 1 ─── n collection_tasks (活动 leased_profile_id)
+        └── n collection_tasks (仅当前 leased_agent_id)</div>
+        </div>
+        <div class="db-grid">
+          <article class="db-card"><h3>crawler.api_clients</h3><p>已通过 tenantKey 白名单授信并实际申请过 Token 的调用方身份。白名单配置是授权来源，表记录是运行时租户边界。</p><dl><dt>id</dt><dd>UUID 主键</dd><dt>tenant_id</dt><dd>白名单中配置的稳定租户 ID，唯一</dd><dt>display_name</dt><dd>白名单同步的可读名称</dd><dt>allowed_scopes</dt><dd>白名单同步的权限范围；未配置时默认 API 全集：collection:write、collection:read、collection:control</dd><dt>config_fingerprint</dt><dd>本次同步的租户配置指纹</dd><dt>status</dt><dd>active / disabled</dd><dt>last_token_issued_at</dt><dd>最近签发时间</dd></dl></article>
+          <article class="db-card"><h3>crawler.api_access_tokens</h3><p>调用方每次成功申请后生成的访问凭证及其完整生命周期。明文 Token 只返回一次，表中仅保存哈希。</p><dl><dt>id</dt><dd>UUID 主键及 Token 审计 ID</dd><dt>client_id</dt><dd>所属 api_client</dd><dt>token_hash</dt><dd>使用独立 API_TOKEN_HASH_KEY 计算的 HMAC-SHA256 哈希，唯一</dd><dt>issued_via_key_fingerprint</dt><dd>本次签发所匹配的 tenantKey 指纹，用于轮换审计</dd><dt>scopes</dt><dd>签发事务显式复制 client 当时的 allowed_scopes，形成不可为空的权限快照；不是运行时动态联查</dd><dt>issued_at / expires_at</dt><dd>签发和失效时间</dd><dt>last_used_at</dt><dd>最近使用时间，可节流更新</dd><dt>revoked_at</dt><dd>主动吊销时间</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_jobs</h3><p>一次外部采集请求及其聚合状态。</p><dl><dt>id</dt><dd>UUID 主键</dd><dt>client_id</dt><dd>调用方外键，限定租户数据边界</dd><dt>external_request_id</dt><dd>调用方生成的逻辑请求 ID，推荐 UUIDv7、ULID 或业务前缀加 ULID；在 client 内唯一</dd><dt>idempotency_key_hash</dt><dd>HTTP 创建操作幂等键哈希，与 client_id 联合唯一</dd><dt>request_payload</dt><dd>创建时冻结的 schemaVersion=1 规范化 JSONB 快照</dd><dt>desired_state / status</dt><dd>控制意图与执行事实</dd><dt>version</dt><dd>乐观锁版本</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_tasks</h3><p>按关键词、地区等查询条件拆分的最小调度单元。租户关系只通过 collection_job 保留，不下发给 Agent。</p><dl><dt>collection_job_id</dt><dd>所属作业，也是租户数据边界的唯一来源</dd><dt>source / keyword / region</dt><dd>下发给 Agent 的执行事实</dd><dt>page_checkpoint</dt><dd>可恢复页级检查点</dd><dt>leased_agent_id</dt><dd>当前执行 Agent；释放租约后清空</dd><dt>leased_profile_id</dt><dd>本次租约绑定的 Browser Profile；部分唯一索引保证单 Profile 单活动任务</dd><dt>lease_token_hash</dt><dd>当前租约秘密的存储域 HMAC，不保存明文</dd><dt>fencing_token</dt><dd>每次领取递增</dd><dt>lease_expires_at</dt><dd>服务端租约期限</dd><dt>attempt_count</dt><dd>有限重试计数</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_task_attempts</h3><p>不可变地记录每次由哪个 Agent 执行哪个任务，避免任务重试或换机后覆盖历史执行者。</p><dl><dt>collection_task_id</dt><dd>被执行的任务</dd><dt>agent_id</dt><dd>实际领取任务的执行机</dd><dt>fencing_token</dt><dd>对应本次任务租约代次</dd><dt>claimed_at</dt><dd>领取时间</dd><dt>released_at</dt><dd>释放或终止时间</dd><dt>outcome</dt><dd>completed / paused / cancelled / failed / lease_expired</dd><dt>failure_code</dt><dd>非业务化失败分类</dd></dl></article>
+          <article class="db-card"><h3>crawler.parsed_job_records</h3><p>唯一的岗位内容表，保存解析后的来源事实，不建立 canonical job。</p><dl><dt>collection_task_id</dt><dd>来源任务外键</dd><dt>source_job_id / source_url</dt><dd>来源标识与规范化 URL</dd><dt>query_context</dt><dd>keyword、region、page JSONB</dd><dt>parsed_fields</dt><dd>解析字段 JSONB</dd><dt>payload_hash</dt><dd>完整 ParsedJobFields 的 camelCase、含 null、键排序、紧凑 UTF-8 JSON 的确定性 SHA-256</dd><dt>collected_at</dt><dd>Agent 观察到页面的时间，不用于交付游标排序</dd><dt>created_at</dt><dd>控制中心接受记录的时间，与 id 共同形成稳定游标</dd></dl></article>
+          <article class="db-card"><h3>crawler.parsed_record_batches</h3><p>Agent 上传重试的幂等回执，不保存第二份岗位内容。</p><dl><dt>id</dt><dd>Agent 生成的 batchId，全局唯一</dd><dt>collection_task_id / attempt_id</dt><dd>首次接受该批次时的任务和执行尝试</dd><dt>request_hash</dt><dd>按请求记录顺序计算的规范化 SHA-256；防止同 batchId 替换内容</dd><dt>record_ids</dt><dd>与请求顺序一致的 acceptedRecordIds，包含被去重记录的既有 ID</dd><dt>inserted_count</dt><dd>本批实际新增的内容记录数</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_agents</h3><p>全局受信任执行机、能力与最近在线状态；不包含 tenant_id，与 api_clients 完全独立。</p><dl><dt>id</dt><dd>受控安装过程生成的稳定 UUID</dd><dt>device_credential_hash</dt><dd>每台执行机唯一的设备凭证哈希，不复用 tenantKey</dd><dt>display_name</dt><dd>运维可读名称</dd><dt>capabilities</dt><dd>版本化 JSONB：schemaVersion、supportedSources、maxConcurrentTasks、browser；预置默认不声明任何来源</dd><dt>current_task_id</dt><dd>当前执行任务，仅用于状态展示和一致性检查</dd><dt>heartbeat_at</dt><dd>最近在线时间；availableSlots 是心跳瞬时值，不属于 capabilities</dd><dt>status</dt><dd>online / offline / disabled</dd></dl></article>
+          <article class="db-card"><h3>crawler.agent_sessions</h3><p>Agent 使用设备身份认证后签发的短期会话，与调用方 api_access_tokens 分离。</p><dl><dt>agent_id</dt><dd>所属 collection_agent</dd><dt>session_token_hash</dt><dd>Agent Token 哈希，唯一</dd><dt>issued_at / expires_at</dt><dd>签发和失效时间</dd><dt>last_used_at</dt><dd>最近请求时间</dd><dt>revoked_at</dt><dd>禁用 Agent 或轮换凭证时吊销</dd></dl></article>
+          <article class="db-card"><h3>crawler.browser_profiles</h3><p>只记录由已认证 Agent 心跳同步的 Profile 路由元数据，不存 Cookie 或目录内容。</p><dl><dt>agent_id</dt><dd>从 Agent Session 确认，调用方不能指定</dd><dt>source</dt><dd>生产来源注册表值；0.4 初始仅 zhaopin</dd><dt>profile_key</dt><dd>Agent 本地不透明引用，禁止绝对路径和秘密内容</dd><dt>status</dt><dd>ready / busy / login_required / unavailable</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_events</h3><p>追加式领域事件与控制审计。</p><dl><dt>collection_job_id</dt><dd>所属作业</dd><dt>event_type</dt><dd>稳定事件名称</dd><dt>payload</dt><dd>无敏感信息的 JSONB</dd><dt>occurred_at</dt><dd>服务端时间</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_job_callback_configs（0004、0008 已实现）</h3><p>Job 级回调配置：回答“投递到哪里、当前使用哪个短期 Token”。每个启用 Webhook 的 Job 至多一条，URL 创建后不可变，Token 可通过后续受保护接口轮换。敏感字段与常规 Job 查询隔离，只有回调投递仓储需要读取。</p><dl><dt>collection_job_id</dt><dd>所属作业，一对一唯一</dd><dt>target_url</dt><dd>经 allowlist 规则校验的 HTTP 或 HTTPS 回调地址，是 URL 的唯一事实来源</dd><dt>auth_scheme</dt><dd>0.4 固定为 bearer</dd><dt>token_ciphertext / token_nonce</dt><dd>AES-256-GCM 密文和 96-bit 随机 nonce；可用状态必须同时存在，安全销毁后必须同时为 null</dd><dt>token_fingerprint</dt><dd>控制面专用 HMAC-SHA256，仅用于幂等与轮换重放比较；销毁密文后保留，不发送给上游、不用于回调鉴权</dd><dt>token_expires_at</dt><dd>服务端权威过期时间；省略请求 expiresAt 时默认创建成功时间加 7 天，销毁后保留用于审计</dd><dt>credential_version</dt><dd>创建为 1，每次成功轮换递增，用于 AEAD AAD 和并发控制；销毁不伪造新版本</dd><dt>encryption_key_version</dt><dd>标识使用的 CALLBACK_TOKEN_ENCRYPTION_KEY 版本</dd><dt>credential_destroyed_at</dt><dd>终态 Job 的全部 Outbox delivered 后记录的服务端销毁时间；非空时 ciphertext/nonce 必须为空</dd></dl></article>
+          <article class="db-card"><h3>crawler.collection_job_callback_credential_rotations（0006 已实现）</h3><p>Callback Token 轮换的永久幂等历史。每次成功轮换追加一条，不覆盖旧操作，因此旧 Idempotency-Key 在当前凭证已经升级后仍返回首次结果。</p><dl><dt>callback_config_id</dt><dd>所属 Job 回调配置</dd><dt>idempotency_key_hash</dt><dd>轮换操作键的 SHA-256；与 callback_config_id 联合唯一</dd><dt>request_fingerprint</dt><dd>由 Token HMAC fingerprint、固定 tokenType 和权威 expiresAt 规范计算的 SHA-256；不包含明文 Token</dd><dt>result_credential_version</dt><dd>该次操作首次成功产生的凭证版本</dd><dt>token_expires_at</dt><dd>首次成功结果的权威过期时间，用于省略 expiresAt 的确定性重放</dd><dt>created_at</dt><dd>轮换成功的服务端时间</dd></dl></article>
+          <article class="db-card"><h3>crawler.webhook_outbox（0005-0009 已实现）</h3><p>事件级投递队列：回答“哪个事件是否已投递、失败后何时重试”。与事件同事务写入，但不复制 URL、Callback Token、fingerprint 或 ciphertext；无 Callback 配置的 Job 不生成 Outbox。</p><dl><dt>event_id</dt><dd>待投递 collection_event 外键，也是上游幂等去重依据</dd><dt>callback_config_id</dt><dd>URL 不可变、Token 可轮换的 Job 回调配置外键；已替换旧 target_url</dd><dt>status</dt><dd>pending / credential_blocked / delivered / permanently_failed；创建时为 pending</dd><dt>dispatch_claim_id</dt><dd>当前 Dispatcher 领取所有权的随机 UUID；结算必须原值匹配</dd><dt>dispatch_claimed_at / dispatch_lease_expires_at</dt><dd>短租约起止时间；三个 claim 字段必须全空或全非空，进程崩溃后允许到期接管</dd><dt>attempt_count</dt><dd>当前自动投递轮次内实际执行 HTTP 的次数；人工重放时归零并重新获得完整重试预算，本地凭证过期或解密失败不计入</dd><dt>replay_count / last_replayed_at</dt><dd>累计成功受理的人工重放次数及最近重放时间；不会因新一轮投递而归零</dd><dt>next_attempt_at</dt><dd>下一次投递时间，首次等于事件 occurredAt；退避、凭证轮换或人工重放时更新</dd><dt>delivered_at</dt><dd>首次成功确认时间</dd><dt>last_failure_code</dt><dd>最近一次非敏感失败分类；凭证恢复或人工重放时清空</dd></dl></article>
+          <article class="db-card"><h3>crawler.webhook_outbox_replays（0009 已实现）</h3><p>人工受控重放的永久幂等与审计历史。每次成功受理追加一条，后续状态变化或再次重放不会覆盖旧结果；不保存 URL、Token、fingerprint、ciphertext 或响应内容。</p><dl><dt>webhook_outbox_id</dt><dd>被重放的事件投递状态</dd><dt>idempotency_key_hash</dt><dd>调用方操作键的 SHA-256，与 outbox 联合唯一，原始键不落库</dd><dt>replay_number</dt><dd>该 Outbox 从 1 开始的人工重放序号，与 outbox 联合唯一</dd><dt>previous_attempt_count</dt><dd>重放前已耗尽的当前轮实际 HTTP 次数</dd><dt>previous_failure_code</dt><dd>重放前的稳定、非敏感 retry_exhausted_* 分类</dd><dt>created_at</dt><dd>控制面成功受理重放的服务端时间，也是幂等响应中的 replayedAt</dd></dl></article>
+        </div>
+        <table>
+          <thead><tr><th>关键约束或索引</th><th>目的</th></tr></thead>
+          <tbody>
+            <tr><td>UNIQUE (tenant_id)</td><td>一个白名单租户对应一个稳定调用方身份，同时允许同一租户平滑轮换多个 tenantKey</td></tr>
+            <tr><td>UNIQUE (token_hash)</td><td>访问 Token 可独立查询、吊销和审计，数据库不保存明文凭证</td></tr>
+            <tr><td>UNIQUE (client_id, idempotency_key_hash)</td><td>网络重试不会重复创建采集作业</td></tr>
+            <tr><td>UNIQUE (client_id, external_request_id)</td><td>同一调用方的逻辑采集请求只对应一个作业；相同 ID 搭配不同 payload 返回 409</td></tr>
+            <tr><td>CHECK callback credential</td><td>auth_scheme 固定为 bearer；可用状态要求 ciphertext/nonce 同时存在，销毁状态要求两者同时为空且 credential_destroyed_at 非空；fingerprint、expires_at 和 key version 始终保留，数据库禁止明文 Token 列</td></tr>
+            <tr><td>UNIQUE (event_id, callback_config_id)</td><td>同一事件向同一 Job 回调配置只产生一个 Outbox 投递状态；0005 已替换旧的 (event_id, target_url)</td></tr>
+            <tr><td>UNIQUE (callback_config_id, idempotency_key_hash)</td><td>同一回调配置下每个轮换操作键只有一个权威结果；保留全部历史而非只保存最后一次操作键</td></tr>
+            <tr><td>CHECK dispatch claim 全空或全非空</td><td>claim ID、领取时间和租约到期时间必须形成完整所有权快照，且到期时间严格晚于领取时间</td></tr>
+            <tr><td>INDEX pending (status, next_attempt_at, dispatch_lease_expires_at, id)</td><td>多 Dispatcher 快速定位到期或可接管的 pending 记录</td></tr>
+            <tr><td>UNIQUE (webhook_outbox_id, idempotency_key_hash / replay_number)</td><td>同一重放操作只产生一个权威结果，并为每个 Outbox 保留连续、不可覆盖的重放代次</td></tr>
+            <tr><td>INDEX (status, created_at, id)</td><td>按投递状态提供稳定 keyset 运维分页，不使用会漂移的 OFFSET</td></tr>
+            <tr><td>CHECK source IN ('zhaopin')</td><td>来源是代码注册表，不接受调用方任意字符串；新增来源必须同步协议、Adapter 与 migration</td></tr>
+            <tr><td>UNIQUE (collection_task_id, source_url, payload_hash)</td><td>同页同内容幂等；内容变化保留新观测</td></tr>
+            <tr><td>INDEX (status, lease_expires_at)</td><td>任务领取和过期租约恢复</td></tr>
+            <tr><td>UNIQUE (collection_task_id, fencing_token)</td><td>一个任务租约代次只产生一条执行尝试记录</td></tr>
+            <tr><td>UNIQUE leased_profile_id WHERE NOT NULL</td><td>一个 Browser Profile 同时只能绑定一个活动任务</td></tr>
+            <tr><td>INDEX (collection_task_id, created_at, id)</td><td>按服务端接受顺序稳定游标分页，避免迟到上传和 OFFSET 漂移</td></tr>
+            <tr><td>条件 UPDATE fencing_token</td><td>拒绝旧 Agent 的迟到 checkpoint、记录和完成请求</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="api">
+        <h2>08. API 与 Agent 协议</h2>
+        <h3>调用方认证</h3>
+        <p>控制中心是纯 API 服务，不建设租户管理 GUI。通过只读 Secret 文件维护 tenantKey 白名单，白名单是调用方授信的唯一配置源；<code>api_clients</code> 和 <code>api_access_tokens</code> 不反向成为新增租户的授权来源。tenantKey 应为高熵随机值，服务端使用常量时间比较验证其哈希。</p>
+<pre>version: 1
+tenants:
+  - tenantId: tenant-a
+    displayName: 上层应用 A
+    enabled: true
+    tenantKeyHashes:
+      - "sha256:&lt;key-fingerprint&gt;"
+    # scopes 可选；省略时为 collection:write、collection:read、collection:control
+    callbackAllowlist:
+      - "http://upstream.internal/api/job-collection/events"</pre>
+        <p>初始 API 权限全集为 <code>collection:write</code>（创建作业）、<code>collection:read</code>（查询作业、事件和岗位记录）、<code>collection:control</code>（暂停、恢复、取消和 Callback Token 轮换）。<code>callbackAllowlist</code> 按 tenant 配置允许的规范化 HTTP 或 HTTPS 完整 URL；创建 Job 时必须精确匹配，禁止 userinfo、fragment 和重定向跟随，避免通过 URL 变体或 3xx 绕过目的地址限制。HTTP 用于受信任内网，跨不受信任网络时由部署方配置 HTTPS。配置文件不进入镜像，由部署系统以只读 Secret 挂载。服务启动时必须完成 schema、重复 tenantId、重复 Key 指纹、scope 和 callback URL 校验，配置无效时启动失败。白名单修改通过代码评审或受控运维流程发布；不提供创建、删除或修改租户的公共 API。</p>
+        <div class="callout warning"><strong>配置与数据库一致性</strong>白名单是最终授信依据。服务启动或受控重载时，在事务中将白名单启用项同步到 <code>api_clients</code>；配置中已禁用或移除的 tenant 必须被标记为 disabled，并吊销其所有未过期 <code>api_access_tokens</code>。数据库中残留的 active 行不能让已移除 tenant 继续访问。tenantKey 轮换通过同一 tenantId 临时配置新旧两个哈希完成，迁移结束后再删除旧哈希。</div>
+        <div class="api-group">
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/auth/token</span><span class="endpoint-note">提交 tenantKey；仅白名单启用项可申请短期访问 Token</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/auth/token/revoke</span><span class="endpoint-note">吊销当前或指定 Token；数据库立即记录 revoked_at</span></div>
+        </div>
+<pre>POST /v1/auth/token
+Content-Type: application/json
+
+{"tenantKey":"&lt;high-entropy-tenant-key&gt;"}
+
+200 OK
+{"accessToken":"&lt;opaque-random-token&gt;","tokenType":"Bearer","expiresIn":3600,"scopes":["collection:write","collection:read","collection:control"]}</pre>
+        <div class="callout"><strong>签发与验证规则</strong>白名单决定 tenantKey 是否有资格申请；<code>api_clients</code> 是白名单租户的运行时映射。若白名单未写 scopes，allowed_scopes 取当前 API 权限全集。签发事务必须显式读取并复制 <code>api_clients.allowed_scopes</code> 到新行 <code>api_access_tokens.scopes</code>，不得依赖数据库列默认值跨表继承。该值是签发时快照；client 被禁用时即使 Token 未过期也整体失效。明文 Token 不写数据库和日志。</div>
+        <table>
+          <thead><tr><th>时序</th><th>处理位置</th><th>动作与持久化结果</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Auth Gateway</td><td>读取只读白名单配置，按 tenantKey 哈希匹配启用条目；不匹配统一返回 401，并进行申请频率限制。</td></tr>
+            <tr><td>2</td><td>api_clients</td><td>仅在白名单匹配成功后，按配置 tenantId 查询启动时已同步的 client；要求记录存在、状态 active 且 config_fingerprint 与当前白名单一致，否则统一返回 401。签发请求不创建或修复 client。</td></tr>
+            <tr><td>3</td><td>Credential Service</td><td>使用安全随机源生成带 cat_ 前缀的 32 字节高熵、不透明 Bearer Token，并使用独立 API_TOKEN_HASH_KEY 计算 HMAC-SHA256 token_hash。</td></tr>
+            <tr><td>4</td><td>api_access_tokens</td><td>在同一事务内把 client 当前 allowed_scopes 复制为 scopes，并写入 client_id、token_hash、issued_via_key_fingerprint、issued_at 和 expires_at；明文 Token 不落库。</td></tr>
+            <tr><td>5</td><td>调用方</td><td>明文 Token 仅在成功响应中返回一次，调用方负责安全保存并在后续请求中使用。</td></tr>
+            <tr><td>6</td><td>Bearer 鉴权中间件</td><td>对请求 Token 计算哈希，联查 Token 未过期/未吊销且 client active，再把 client_id 注入请求上下文。</td></tr>
+          </tbody>
+        </table>
+        <h3>调用方 API</h3>
+        <div class="callout"><strong>两条认证方向</strong>上游应用调用控制中心时，使用 tenantKey 换取的 Caller Token；控制中心调用上游 callback API 时，使用上游为该 Job 一次签发的短期 Callback Token。Callback Token 只能访问已登记的回调接口，不能调用控制中心、不能访问其他 Job，也不能替代 Caller Token。它是“一次签发”而不是“一次调用”：在有效期内必须允许同一 eventId 的幂等重试。</div>
+        <div class="api-group">
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/collection-jobs</span><span class="endpoint-note">幂等创建，返回 202 和 Location</span></div>
+          <div class="endpoint"><span class="method">GET</span><span class="path">/v1/collection-jobs/{jobId}</span><span class="endpoint-note">查询状态、计数、错误和时间</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/.../{jobId}/pause | resume | cancel</span><span class="endpoint-note">幂等控制命令，非法转换返回 409</span></div>
+          <div class="endpoint"><span class="method">PUT</span><span class="path">/.../{jobId}/callback-token</span><span class="endpoint-note">轮换即将过期或被拒绝的单 Job Callback Token</span></div>
+          <div class="endpoint"><span class="method">GET</span><span class="path">/.../{jobId}/records?cursor=</span><span class="endpoint-note">解析后原始岗位记录游标分页</span></div>
+          <div class="endpoint"><span class="method">GET</span><span class="path">/.../{jobId}/events</span><span class="endpoint-note">状态历史和操作审计</span></div>
+        </div>
+<pre>POST /v1/collection-jobs
+Authorization: Bearer &lt;caller-access-token&gt;
+Idempotency-Key: &lt;opaque-http-operation-key&gt;
+
+{
+  "externalRequestId": "jobreq_01K5BJ8J2M0G8VN2F6ZQ4RD7Y9",
+  "schemaVersion": 1,
+  "source": "zhaopin",
+  "queries": [{"keyword": "Python", "region": "北京", "pageLimit": 10}],
+  "collectionMode": "full",
+  "callback": {
+    "url": "http://upstream.internal/api/job-collection/events",
+    "accessToken": "&lt;opaque-job-callback-token&gt;",
+    "tokenType": "Bearer",
+    "expiresAt": null
+  },
+  "metadata": {}
+}
+
+202 Accepted
+Location: /v1/collection-jobs/&lt;collectionJobId&gt;
+
+{"collectionJobId":"&lt;uuid&gt;","externalRequestId":"jobreq_01K5BJ8J2M0G8VN2F6ZQ4RD7Y9","status":"queued","callbackTokenExpiresAt":"2026-09-24T09:00:00+08:00"}
+
+无 callback 时该固定响应字段为：
+{"callbackTokenExpiresAt":null}</pre>
+        <div class="callout"><strong>0004 已实现</strong><code>callback</code> 可整体为 null；一旦非空，url、accessToken 和 tokenType 必须同时存在。url 支持 HTTP 和 HTTPS，必须精确命中 tenant 白名单；HTTP 用于受信任内网。tokenType 在 0.4 只接受 Bearer（JSON 值大小写固定），accessToken 长度 43-1024 且应由至少 32 字节密码学安全随机源生成。Token 只能位于创建 Job 的 JSON 请求体，禁止拼入 URL、query、header 日志或 metadata。</div>
+        <div class="callout"><strong>七天有效期</strong><code>expiresAt</code> 必须是带时区的 RFC 3339 时间。省略或为 null 时，控制面以首次成功创建 Job 的服务端时间加 604800 秒计算；显式值必须晚于当前时间且不得超过该七天上限。202 响应中的 <code>callbackTokenExpiresAt</code> 是权威值，调用方必须据此设置上游 Token 的失效时间；无 callback 时固定返回 null。幂等重放返回首次计算的同一时间，不重新延长 Token。</div>
+        <div class="callout"><strong>控制面密文存储与销毁</strong>控制面使用独立 <code>CALLBACK_TOKEN_ENCRYPTION_KEY</code> 对 Callback Token 执行 AES-256-GCM，加密时使用 96-bit 随机 nonce，AAD 固定包含 schema 名、callbackConfigId、collectionJobId 和 credentialVersion。数据库在凭证可用期保存 ciphertext、nonce、key version 和 expiresAt；另用独立 <code>CALLBACK_TOKEN_FINGERPRINT_KEY</code> 计算 HMAC-SHA256 fingerprint，仅用于幂等和轮换比较。终态 Job 的全部 Outbox delivered 后，在最后一次结算事务中清空 ciphertext/nonce 并记录 credentialDestroyedAt；fingerprint、版本、过期时间和轮换历史保留用于确定性幂等与审计。上游如何哈希验证 Token 是上游内部实现，控制面不保存、不交换跨应用 digest profile。</div>
+        <div class="callout"><strong>作业标识、鉴权与请求快照</strong>该端点要求有效调用方 Bearer Token 的签发快照包含 <code>collection:write</code>。Token 校验先定位 Token，再对所属 client 加共享锁并二次读取 Token；因此同 client 的创建请求可并行，而 client 禁用会等待在途受保护操作结束，禁用提交后旧 Token 立即失效。验证成功会在创建作业的同一事务更新 <code>last_used_at</code>。</div>
+        <div class="callout"><strong>幂等判定</strong><code>externalRequestId</code> 由上层调用方生成，推荐 UUIDv7、ULID 或业务前缀加 ULID，必须匹配 <code>^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$</code>；一个逻辑请求的所有网络重试必须复用，在 client 范围内唯一。Idempotency-Key 是不透明 HTTP 操作键，数据库仅保存其 SHA-256 摘要。幂等比较包含规范化采集 payload、规范化 callback URL、tokenType、首次权威 expiresAt 和本地 token fingerprint，不读取明文 Token。完全相同的重放返回既有作业；复用任一标识但改变上述任一项返回 409。Callback Token 不得与当前 Caller Token 相同，禁止两个身份域复用凭证。</div>
+        <table>
+          <thead><tr><th>创建或轮换返回码</th><th>冻结语义</th></tr></thead>
+          <tbody>
+            <tr><td>401</td><td>Caller Token 缺失、无效、过期、已吊销，或所属 client 已禁用</td></tr>
+            <tr><td>403</td><td>Caller Token 缺少接口要求的 scope</td></tr>
+            <tr><td>404</td><td>Job 不存在，或不属于当前 client；不泄露跨 tenant 资源是否存在</td></tr>
+            <tr><td>409</td><td>创建或轮换幂等键冲突，或 Job 当前状态不允许轮换</td></tr>
+            <tr><td>422</td><td>callback URL 未命中该 tenant 白名单，或 Token、tokenType、expiresAt 不合法</td></tr>
+          </tbody>
+        </table>
+        <div class="callout"><strong>请求快照</strong>数据库 <code>request_payload</code> 只冻结 schemaVersion、source、queries、collectionMode 和 metadata，不包含 externalRequestId、tenantId、clientId、任何 Token、Idempotency-Key 或 callback 配置。callback URL 和 Token 密文只存在 <code>collection_job_callback_configs</code>，也不下发 Agent。新作业及其每个 query 对应的任务初始均为 <code>desired_state=running</code>、<code>status=queued</code>。</div>
+<pre>GET /v1/collection-jobs/&lt;collectionJobId&gt;
+Authorization: Bearer &lt;caller-access-token&gt;
+
+200 OK
+{
+  "collectionJobId": "&lt;uuid&gt;",
+  "externalRequestId": "jobreq_01K5BJ8J2M0G8VN2F6ZQ4RD7Y9",
+  "source": "zhaopin",
+  "desiredState": "paused",
+  "status": "pausing",
+  "version": 2,
+  "taskStatusCounts": {
+    "total": 2, "queued": 0, "running": 0, "pausing": 1, "paused": 1,
+    "awaitingHuman": 0, "cancelling": 0, "cancelled": 0,
+    "succeeded": 0, "partiallySucceeded": 0, "failed": 0
+  },
+  "processedCount": 37,
+  "failureCodeCounts": {},
+  "createdAt": "2026-09-17T09:00:00Z",
+  "updatedAt": "2026-09-17T09:05:00Z",
+  "completedAt": null
+}</pre>
+        <div class="callout"><strong>查询与租户边界</strong>详情查询要求 Token 包含 <code>collection:read</code>，控制命令要求 <code>collection:control</code>。作业查询必须同时使用 jobId 和鉴权得到的 clientId；其他 tenant 的作业与不存在的作业统一返回 404。任务计数按全部协议状态返回固定字段，失败只按非敏感 failureCode 聚合，不返回 Agent 身份、租约秘密或其他调用方上下文。</div>
+<pre>POST /v1/collection-jobs/&lt;collectionJobId&gt;/pause
+POST /v1/collection-jobs/&lt;collectionJobId&gt;/resume
+POST /v1/collection-jobs/&lt;collectionJobId&gt;/cancel
+Authorization: Bearer &lt;caller-access-token&gt;
+
+200 OK
+返回与详情查询相同的作业状态结构</pre>
+        <div class="callout"><strong>控制事务与幂等</strong>控制事务依次对 client 加共享锁、按 clientId 加锁目标作业，再按 taskId 顺序锁定子任务，随后原子更新任务和作业。相同控制意图重复提交返回当前状态，不增加 version；实际意图变化只增加一次 version。非法转换和已成功、部分成功或失败作业上的新控制返回 409。控制响应中的 <code>pausing</code> 或 <code>cancelling</code> 表示命令已经持久化但 Agent 尚未完成协作退出，不应误判为暂停或取消已经完成。</div>
+        <h3 style="margin-top: 24px">Callback Token 轮换协议</h3>
+<pre>PUT /v1/collection-jobs/&lt;collectionJobId&gt;/callback-token
+Authorization: Bearer &lt;caller-access-token&gt;
+Idempotency-Key: &lt;opaque-rotation-key&gt;
+Content-Type: application/json
+
+{
+  "accessToken": "&lt;new-opaque-job-callback-token&gt;",
+  "tokenType": "Bearer",
+  "expiresAt": null
+}
+
+200 OK
+{"callbackTokenExpiresAt":"2026-10-01T09:00:00+08:00","credentialVersion":2}</pre>
+        <div class="callout"><strong>轮换规则</strong>该接口要求 Caller Token 具备 <code>collection:control</code>，并按 clientId 锁定 Job；其他 tenant、未知 Job 或未配置 Callback 的 Job 均返回 404。只有 Job 尚未终态，或仍有未成功 Outbox 时允许新轮换；凭证已经销毁或终态 Job 已无未成功 Outbox 时返回 409。URL 不允许通过此接口修改。成功事务以递增后的 credentialVersion 作为 AAD 重新加密并替换 ciphertext、nonce、fingerprint、expiresAt 和 encryptionKeyVersion，同时把未投递的 credential_blocked Outbox 恢复为 pending。每次成功操作追加幂等历史；相同 Idempotency-Key 与相同 Token fingerprint/expiresAt 返回首次版本和过期时间，即使当前凭证已再次轮换或已经销毁也不覆盖、不恢复密文；改换 Token 或 expiresAt 返回 409。请求省略 expiresAt 时，首次成功结果保存计算出的七天权威时间，重放直接复用该值而不按重放时间重新计算。</div>
+
+        <h3 style="margin-top: 24px">Webhook 运维查询与受控重放协议</h3>
+<pre>GET /v1/collection-jobs/&lt;collectionJobId&gt;/webhook-deliveries
+  ?status=permanently_failed&amp;limit=50&amp;cursor=&lt;opaque-cursor&gt;
+Authorization: Bearer &lt;caller-access-token&gt;
+
+200 OK
+{
+  "items": [{
+    "outboxId": "&lt;uuid&gt;",
+    "eventId": "&lt;uuid&gt;",
+    "eventType": "collection.job.terminal",
+    "status": "permanently_failed",
+    "attemptCount": 8,
+    "replayCount": 0,
+    "replayEligible": true,
+    "nextAttemptAt": "2026-09-18T12:00:00Z",
+    "deliveredAt": null,
+    "lastFailureCode": "retry_exhausted_http_503",
+    "activeClaim": false,
+    "claimExpiresAt": null,
+    "lastReplayedAt": null,
+    "createdAt": "2026-09-18T11:00:00Z"
+  }],
+  "nextCursor": null
+}</pre>
+        <div class="callout"><strong>查询边界</strong>接口要求 <code>collection:read</code>，默认筛选 <code>permanently_failed</code>，也可显式查询 pending、credential_blocked 或 delivered。游标绑定 jobId 与 status，并按 createdAt、outboxId 做稳定 keyset 分页。所有读取都从 Caller Token 的 clientId 联查 Job；未知 Job 和跨 tenant Job 统一返回 404。响应只暴露稳定失败分类和调度状态，不暴露 target URL、tenant/client 内部标识、凭证 fingerprint、ciphertext、nonce 或响应正文。</div>
+<pre>POST /v1/collection-jobs/&lt;collectionJobId&gt;/webhook-deliveries/&lt;outboxId&gt;/replay
+Authorization: Bearer &lt;caller-access-token&gt;
+Idempotency-Key: &lt;opaque-replay-operation-key&gt;
+
+202 Accepted
+{
+  "outboxId": "&lt;uuid&gt;",
+  "status": "pending",
+  "replayNumber": 1,
+  "replayedAt": "2026-09-18T13:00:00Z",
+  "previousAttemptCount": 8,
+  "previousFailureCode": "retry_exhausted_http_503"
+}</pre>
+        <div class="callout"><strong>受控重放资格</strong>接口要求 <code>collection:control</code> 和非空、最长 200 字符的 Idempotency-Key。只有状态为 permanently_failed 且 lastFailureCode 为 <code>retry_exhausted_*</code> 的记录可重放；协议型 3xx/4xx 永久失败不能借此自动重试。Outbox 不得存在 claim，Callback ciphertext/nonce 必须仍可用且 Token 尚未过期。凭证已销毁、过期、状态不符或使用新操作键重放已经恢复的记录均返回 409；未知 outbox、跨 Job 或跨 tenant 均返回相同 404。</div>
+        <div class="callout"><strong>重试预算、幂等与锁序</strong>受理事务先通过 Event/Job/client 联查锁定 Outbox，再锁定 callback 配置，与 Dispatcher 的 Outbox → callback 锁序一致。事务把状态改为 pending、attemptCount 归零、replayCount 加一、nextAttemptAt 设为受理时间并清除旧失败码；因此新轮次重新获得完整自动重试预算。此前尝试次数和失败码写入永久 replay 历史。数据库只保存 Idempotency-Key SHA-256；同一键即使在后续 delivered 或更多重放后再次提交，仍返回首次结果，不重复修改 Outbox。</div>
+
+        <h3 style="margin-top: 24px">冻结的 Webhook 投递协议</h3>
+<pre>POST &lt;callback.url&gt;
+Authorization: Bearer &lt;decrypted-job-callback-token&gt;
+Idempotency-Key: &lt;eventId&gt;
+Content-Type: application/json
+
+{
+  "schemaVersion": 1,
+  "eventId": "&lt;uuid&gt;",
+  "eventType": "collection.job.terminal",
+  "occurredAt": "2026-09-17T10:00:00+08:00",
+  "collectionJobId": "&lt;uuid&gt;",
+  "externalRequestId": "jobreq_01K5BJ8J2M0G8VN2F6ZQ4RD7Y9",
+  "jobVersion": 5,
+  "payload": {
+    "status": "succeeded",
+    "processedCount": 127,
+    "failureCodeCounts": {},
+    "completedAt": "2026-09-17T10:00:00+08:00"
+  }
+}</pre>
+        <h3 style="margin-top: 24px">Outbox 事件目录（schemaVersion 1）</h3>
+        <p><code>webhook_outbox</code> 不定义另一套事件类型，它只负责可靠投递同一事务写入的 <code>collection_events</code>。0.4 冻结以下三种事件；只有创建 Job 时配置了 Callback，事件才会产生对应 Outbox 记录。</p>
+        <table>
+          <thead>
+            <tr><th>eventType</th><th>触发时机与出现次数</th><th>payload（camelCase）</th><th>回调应用建议处理</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>collection.job.accepted</code></td>
+              <td>新 Job、子任务与 Callback 配置完成同事务持久化时产生；每个 Job 恰好一次。创建接口的幂等重放不重复产生。</td>
+              <td><code>source</code>；<code>desiredState="running"</code>；<code>status="queued"</code>；<code>taskCount</code></td>
+              <td>建立或确认上游侧 Job 映射，记录已被控制面受理；不能据此判定 Agent 已开始执行。</td>
+            </tr>
+            <tr>
+              <td><code>collection.job.desired_state_changed</code></td>
+              <td>pause、resume 或 cancel 确实改变 Job 控制意图时产生；每个 Job 可出现多次。相同控制命令的幂等重放不重复产生。</td>
+              <td><code>action</code>：<code>pause | resume | cancel</code>；变更后的 <code>desiredState</code> 与 <code>status</code></td>
+              <td>更新控制意图和当前聚合状态。<code>pausing</code>、<code>cancelling</code> 只表示协作控制已持久化，不能当作操作已完成。</td>
+            </tr>
+            <tr>
+              <td><code>collection.job.terminal</code></td>
+              <td>Job 首次聚合为终态时产生；每个 Job 恰好一次。终态包括 cancelled、succeeded、partially_succeeded、failed。</td>
+              <td><code>status</code>；<code>processedCount</code>；<code>failureCodeCounts</code>；<code>completedAt</code></td>
+              <td>完成上游流程并按需通过 Records API 拉取岗位明细。该事件只提供汇总，不携带岗位记录。</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout"><strong>事件感知边界</strong>0.4 不为 queued → running、running → awaiting_human、暂停完成、Agent 上下线、Profile 登录状态、单个 Task 状态和单批岗位记录生成 Webhook 事件。需要这些中间态时，上游通过 Job 查询接口读取当前聚合快照；不要把“长时间未收到新事件”解释为失败。后续增加事件类型必须提升事件契约版本或保持 schemaVersion 1 的向后兼容，回调应用应忽略未知 eventType，而不是使整个回调端点失败。</div>
+        <div class="callout"><strong>信封、顺序与去重</strong>所有类型共享 eventId、eventType、occurredAt、collectionJobId、externalRequestId、jobVersion 和 payload。事件信封不包含 tenantId、clientId、Agent、Profile、租约、Caller Token 或 Callback Token。投递为至少一次，上游必须以 eventId 持久化去重，重复事件仍返回任意 2xx 且不得重复执行业务副作用。jobVersion 用于识别迟到事件，但同一事务产生的控制事件与终态事件可能共享 jobVersion；同版本时按业务语义处理，不能依赖 UUID 或到达顺序推断先后。</div>
+        <div class="callout"><strong>投递结果分类</strong>任意 2xx 表示已接受且 Outbox 标记 delivered；响应正文不参与协议。连接失败、超时、408、425、429 和 5xx 进入有界指数退避，429/503 可读取受上限约束的 Retry-After。401/403 将 Outbox 标记为 credential_blocked，等待调用方轮换 Token，不做无意义高频重试。其他 4xx 记为永久失败。控制面禁止自动跟随 3xx 重定向，防止 callback allowlist 被绕过。</div>
+        <div class="callout"><strong>Dispatcher 并发与恢复</strong>API 生命周期默认启动 4 个可配置 worker。worker 使用 <code>FOR UPDATE SKIP LOCKED</code> 领取 <code>status=pending</code>、已到 <code>nextAttemptAt</code> 且无有效 claim 的一条记录，在数据库提交 30 秒短租约后才执行网络调用，因此不会在 Job 状态事务或数据库行锁内等待 HTTP。结算使用 outboxId + claimId 比较并交换；租约到期可由同实例其他 worker 或另一 API 实例接管，旧 worker 的迟到结果不能覆盖新持有者。该机制仍是至少一次而非恰好一次，上游必须按 eventId 去重。</div>
+        <div class="callout"><strong>重试与凭证竞争</strong>默认 HTTP 超时 10 秒、最多 8 次实际请求、基础退避 5 秒、退避上限 900 秒；429/503 的 Retry-After 支持秒数和 HTTP-date，并受独立上限约束。达到最大次数后标记 permanently_failed。Callback Token 在本地已过期或无法解密时直接 credential_blocked，不发 HTTP 且不增加 attemptCount。旧 Token 的 401/403 与轮换并发时，结算再次比较 credentialVersion；版本已经变化则保持 pending 并立即改用新凭证，不能由旧响应重新封锁。</div>
+        <div class="callout"><strong>HTTP 最小暴露</strong>Dispatcher 发送冻结 JSON 信封、Bearer Token 和 eventId 幂等键，禁止自动跟随重定向并关闭环境代理读取。实现不读取回调响应正文；网络错误只保存 timeout 或 connection_error 等稳定失败码，不把 Callback URL、Authorization、Token、响应正文或底层异常文本写入 Outbox 和应用日志。专用 Transport 将 httpx/httpcore 依赖日志固定为 WARNING，避免其默认 INFO/DEBUG 请求日志绕过应用审计边界并输出完整 Callback URL。</div>
+        <div class="callout"><strong>端到端故障验收</strong>真实 PostgreSQL Outbox、AES-GCM 凭证解密、Dispatcher、httpx Transport 与回环 TCP Callback 服务已组成完整自动化链路。测试注入 503/Retry-After、服务端断连、读超时、307、401 后凭证轮换，以及 claim 到期后的并发接管；验证指数退避、禁止重定向、相同 eventId 至少一次投递、新旧 Token 切换、迟到结算 fencing 和 URL/Token/响应正文脱敏。该验收不包含已明确延期的 DNS/IP 分类、连接地址固定与 DNS rebinding 防护。</div>
+        <div class="callout"><strong>指标、告警与安全审计</strong><code>GET /internal/metrics</code> 提供 Prometheus 格式的 Webhook 聚合指标且不进入 OpenAPI。数据库实时 Gauge 包含 pending、最老 pending 年龄、credential_blocked、permanently_failed、retry_exhausted 和活动 claim；进程 Counter/Histogram 包含各结算结果、投递耗时、过期 claim 接管、陈旧结算、重试耗尽和 Dispatcher 异常。指标标签只使用固定 result 集合，不使用 URL、tenant、Job、Event、Outbox 或失败文本。每次结算输出单行 JSON 审计，字段限定为 Event/Job/Outbox ID、credentialVersion、attempt、结果和受控失败码。指标端点不使用 tenant Caller Token，生产由反向代理或网络策略仅允许监控网络访问；多 API 副本需逐实例抓取进程 Counter。</div>
+        <div class="callout warning"><strong>至少一次语义与最终销毁</strong>Callback Token 不能在第一次 HTTP 请求后立即消费失效。上游可能已经提交事件事务但响应在网络中丢失，控制面必须能用相同 Token 和 eventId 重试。Token 的“一次性”只表示每个 Job 单独签发、权限单一并有七天上限。每次 delivered 结算都会串行锁定 callback 配置；只有 Job 已终态且该配置不存在任何其他非 delivered Outbox 时，才在同一事务把 ciphertext/nonce 置空并记录 credentialDestroyedAt。credential_blocked、permanently_failed、非终态 Job 或尚有并发投递均不触发提前销毁；销毁完成后上游可立即吊销对应 Token。</div>
+        <h3 style="margin-top: 24px">Agent API</h3>
+        <p>Agent 使用独立的设备身份和 <code>agent_sessions</code>，不提交 tenantKey，也不访问调用方 Token 接口。首次信任建立分为“安装前预置”和“运行时建会话”两个阶段。<code>collection_agents</code> 由控制中心侧的非 HTTP provisioning CLI 使用运维权限预先写入，并不依赖 Agent Session；Agent Session 只在预置身份验证成功后创建，因此不存在循环依赖。</p>
+<pre>阶段 A：受控安装前置预置（此时不需要 Agent Session）
+  1. 授权运维流水线在控制中心侧运行 provision-agent CLI
+  2. CLI 生成唯一 agentId + 高熵 deviceSecret
+  3. CLI 通过数据库事务写入 collection_agents(id, display_name,
+     device_credential_hash, status=offline)，capabilities 使用版本化默认值：
+     {"schemaVersion":1,"supportedSources":[],"maxConcurrentTasks":1,
+      "browser":{"name":"chrome","headful":true}}
+  4. 明文 agentId + deviceSecret 仅一次性交付给对应执行机并写入系统凭据存储
+
+阶段 B：Agent 首次启动及后续运行时认证
+  5. Agent 调用 POST /v1/agent/sessions，提交 agentId + deviceSecret
+  6. API 查询预置的 collection_agents，并以常量时间校验凭证哈希和设备状态
+  7. 校验成功后 API 才写入 agent_sessions(session_token_hash, expires_at)
+  8. 明文短期 Agent Token 仅返回一次，后续心跳和任务接口使用该 Token</pre>
+        <div class="callout"><strong>Provisioning CLI 约束</strong>控制中心镜像提供非 HTTP 的 <code>provision-agent --display-name "..."</code> 命令；安装编排器重试同一请求时复用显式 <code>--agent-id</code>，已有 ID 会被拒绝且不会重新发放凭证。CLI 只把明文 deviceSecret 作为一次性 JSON 标准输出交付，数据库仅保存使用独立 <code>AGENT_DEVICE_CREDENTIAL_HASH_KEY</code> 计算的 HMAC 哈希。未指定 ID 时由安全随机源生成新的 UUID。</div>
+        <div class="callout"><strong>执行机凭据与托管</strong>托管配置只保存 keyring service/username，Agent 启动时从当前专用账号的系统凭据库读取 deviceSecret；Windows 对应 Credential Manager，Linux 对应图形会话中已解锁的 Secret Service。凭据命令使用隐藏输入和二次确认，不接受 secret 命令参数且不输出 secret。由于可见浏览器和人工验证依赖交互桌面，Windows 使用 Interactive 登录计划任务而不是 Session 0 Service；Linux 使用 systemd user service + desktop autostart，而不是系统级 daemon 或 user lingering。</div>
+        <div class="callout warning"><strong>Bootstrap 边界</strong><code>POST /v1/agent/sessions</code> 是设备凭证换取短期会话的认证接口，不是 Agent 注册接口，不允许在找不到 agentId 时自动创建 <code>collection_agents</code>。provision-agent CLI 不对公网暴露，不使用调用方 Token，也不绑定 tenant；其执行审计由部署/运维系统负责。</div>
+        <div class="callout"><strong>Session 与凭证生命周期</strong>Session 签发、<code>rotate-agent-credential</code> 和 <code>disable-agent</code> 都对目标 Agent 行执行 <code>FOR UPDATE</code>，避免旧 deviceSecret 与轮换并发时产生漏吊销 Session。未知、disabled 或凭证错误统一返回 401；未知 ID 仍执行一次虚拟 HMAC 比较。Session Token 使用独立 <code>AGENT_TOKEN_HASH_KEY</code> 计算 HMAC-SHA256，明文仅返回一次。轮换和禁用在修改 Agent 的同一事务中吊销全部未过期 Session，轮换不会隐式启用 disabled Agent。</div>
+        <p>Agent Session 只证明执行机身份，不包含 tenant。控制中心从全局排队任务中按来源能力、Profile 可用性、优先级和公平策略选择任务；Agent 不参与租户选择。</p>
+        <div class="api-group">
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/agent/sessions</span><span class="endpoint-note">设备凭证换取短期令牌</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/agent/heartbeat</span><span class="endpoint-note">执行机能力、Profile 和在线状态</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/v1/agent/tasks/claim</span><span class="endpoint-note">SKIP LOCKED 领取与 fencing token</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/.../{taskId}/heartbeat | checkpoint</span><span class="endpoint-note">续租、控制反馈和断点保存</span></div>
+          <div class="endpoint"><span class="method">POST</span><span class="path">/.../{taskId}/records | complete | release</span><span class="endpoint-note">幂等上传、提交终态和释放租约</span></div>
+        </div>
+<pre>POST /v1/agent/sessions
+Content-Type: application/json
+
+{"agentId":"&lt;pre-provisioned-uuid&gt;","deviceSecret":"&lt;one-time-installed-secret&gt;"}
+
+200 OK
+{"sessionToken":"&lt;opaque-agent-token&gt;","expiresAt":"&lt;RFC3339 timestamp&gt;"}</pre>
+<pre>POST /v1/agent/heartbeat
+Authorization: Bearer &lt;agent-token&gt;
+
+{
+  "agentId": "&lt;pre-provisioned-uuid&gt;",
+  "capabilities": {
+    "schemaVersion": 1,
+    "supportedSources": ["zhaopin"],
+    "maxConcurrentTasks": 1,
+    "browser": {"name": "chrome", "headful": true}
+  },
+  "availableSlots": 1,
+  "profiles": [{"source": "zhaopin", "profileKey": "primary", "status": "ready"}]
+}
+
+204 No Content</pre>
+        <div class="callout"><strong>能力、并发槽与 Profile 写入</strong><code>capabilities</code> 是版本化长期能力，<code>availableSlots</code> 是瞬时值且必须在 0 到 maxConcurrentTasks 之间。Agent 扫描本机受控配置后上报 Profile；API 从 Session 确认 agentId，校验 source 既在生产注册表又在 supportedSources 中，再按 <code>(agent_id, source, profile_key)</code> 事务 upsert 状态和 updated_at。本轮未上报的项超过离线阈值后标记 unavailable，不立即删除。profileKey 只能是不透明本机引用，不能是绝对路径、Cookie 或 Profile 内容。</div>
+        <div class="callout"><strong>心跳事务边界</strong>Bearer Token 先定位 Agent Session，再锁定所属 Agent 行，并在获得锁后重新读取 Session，防止凭证轮换或禁用与心跳交错。只有 Session 未过期、未吊销、Agent 未禁用且请求 agentId 与 Session 一致时，才在同一事务更新 Session last_used_at、Agent online/heartbeat_at/capabilities 和 Profile；任何鉴权失败都不产生部分写入。</div>
+<pre>POST /v1/agent/tasks/claim
+Authorization: Bearer &lt;agent-token&gt;
+
+{"agentId":"&lt;agent-uuid&gt;","claimRequestId":"&lt;new-uuid&gt;"}
+
+200 OK
+{
+  "agentId": "&lt;agent-uuid&gt;",
+  "taskId": "&lt;task-uuid&gt;",
+  "attemptId": "&lt;claim-request-uuid&gt;",
+  "source": "zhaopin",
+  "profileKey": "primary",
+  "keyword": "Python",
+  "region": "北京",
+  "pageLimit": 10,
+  "pageCheckpoint": 0,
+  "leaseToken": "&lt;opaque-lease-token&gt;",
+  "fencingToken": 1,
+  "leaseExpiresAt": "&lt;RFC3339 timestamp&gt;"
+}</pre>
+        <div class="callout"><strong>领取匹配与并发</strong>请求不提交 supportedSources；服务端只采用最近有效心跳持久化的 capabilities，并要求同来源 Profile 状态为 ready 且未超过离线阈值。事务先锁 Agent，再以创建时间和 ID 排序对候选 Job、Task 使用 <code>FOR UPDATE SKIP LOCKED</code>，随后原子绑定 Agent 与 Profile、递增 fencingToken/attemptCount、写入不可变 attempt，并把 Profile 标记为 busy。当前 0.4 单任务 Agent 通过 currentTaskId 拒绝第二次并发领取。无匹配任务返回 204；Agent 不具备领取条件返回 409。</div>
+        <div class="callout"><strong>领取重试</strong>claimRequestId 同时是 attemptId 和领取幂等键。租约 Token 使用从 AGENT_TOKEN_HASH_KEY 按固定标签派生的独立签发/存储子密钥；相同请求在租约有效期内可确定性恢复同一个明文 Token、taskId、profileKey 和 fencingToken。数据库只保存 Token HMAC。跨 Agent 复用、已释放、被修改或已过期的 claimRequestId 返回 409，不会领取新任务。</div>
+<pre>POST /v1/agent/tasks/&lt;taskId&gt;/heartbeat
+Authorization: Bearer &lt;agent-token&gt;
+
+{
+  "agentId": "&lt;agent-uuid&gt;",
+  "taskId": "&lt;task-uuid&gt;",
+  "leaseToken": "&lt;opaque-lease-token&gt;",
+  "fencingToken": 1,
+  "leaseExpiresAt": "&lt;current-server-expiry&gt;"
+}
+
+200 OK
+{"desiredState":"running","leaseExpiresAt":"&lt;new-server-expiry&gt;"}</pre>
+        <div class="callout"><strong>活跃租约鉴权与续租</strong>每次 heartbeat、checkpoint、complete、release 和记录上传都先验证 Agent Session，再按 Agent → Job → Task 顺序加锁，并同时核验 path/body taskId、Agent/Task/Profile 绑定、当前 attempt、leaseToken HMAC、fencingToken、客户端提交的 leaseExpiresAt 与数据库当前值，以及服务端租约尚未过期。Session 无效统一返回 401；任何租约字段过时、错配或租约已失效统一返回 409。续租响应中的 leaseExpiresAt 是下一次请求必须提交的新值，成功续租后旧值立即失效。</div>
+        <div class="callout"><strong>检查点与协作退出</strong>checkpoint 只接受不小于数据库当前值的 pageCheckpoint 和 processedCount，且 pageCheckpoint 不得超过 pageLimit；响应同时返回 running、paused 或 cancelled 控制意图。complete 将 completed/failed 写为 succeeded/failed，paused/cancelled 仅在 Job 与 Task 的 desiredState 一致时接受。release 在 running 意图下重排队，在 paused/cancelled 意图下进入对应稳定状态。终止事务同时清除 Task 租约、Agent currentTaskId、完成 attempt 并聚合作业；Profile 仅在当前仍为 busy 时改回 ready，不覆盖 Agent 已上报的 login_required 或 unavailable。</div>
+        <div class="callout"><strong>过期回收</strong>回收器每个事务只处理一个过期候选：先无锁发现候选，再按 Agent → Job → Task 加锁并重新核验租约未发生变化。running 任务回到 queued，paused/cancelled 意图进入对应状态，attempt 记录 lease_expired；清除绑定时额外递增 fencingToken，使旧执行者即使持有原 leaseToken 也无法迟到写入。当前版本在每次 claim 前执行一次回收，后续可增加独立调度器以降低无领取流量时的回收延迟。</div>
+        <div class="callout"><strong>岗位记录批次</strong><code>POST /v1/agent/tasks/{taskId}/records</code> 复用完整活跃租约鉴权，并验证每条记录的 source、keyword、region 和 page 与不可变 Task 事实一致。payloadHash 是完整 ParsedJobFields（camelCase、包含 null、键排序、紧凑 UTF-8 JSON）的 SHA-256。内容表按 taskId、规范化 sourceUrl、payloadHash 去重；回执表按 batchId 保存请求哈希和有序 acceptedRecordIds。相同批次原样重试返回首次结果，同 ID 修改内容或跨任务复用返回 409。</div>
+        <div class="callout"><strong>调用方记录分页</strong><code>GET /v1/collection-jobs/{jobId}/records</code> 要求 collection:read，并以鉴权得到的 clientId 限定 Job；其他 tenant 与未知 Job 均返回 404。游标是携带版本、jobId、服务端 createdAt 和 recordId 的不透明 URL-safe Base64 值，只能用于原 Job。查询按 createdAt、recordId 做 keyset pagination，每页 1-200 条，不采用 OFFSET，也不使用可能迟到的 Agent collectedAt 排序。</div>
+        <div class="callout"><strong>Agent 协议规则</strong>Agent 身份认证与调用方 tenantKey 认证相互独立。任务领取响应只包含 attemptId、taskId、source、profileKey、keyword、region、pageLimit、checkpoint 和租约信息，禁止包含 tenantId、clientId、externalRequestId、callback 或调用方 metadata。所有 Agent 写请求同时校验 agentId、taskId、leaseToken、fencingToken 和 leaseExpiresAt；控制中心再经 task → job → client 确定结果的租户归属。</div>
+        <div class="callout"><strong>Fake Adapter 验收边界</strong>确定性 <code>FakeSourceAdapter</code> 只在内部测试中模拟 <code>zhaopin</code> 协议事实，不增加 <code>fake</code> 公共来源，也不启动浏览器或访问网络。固定查询、页码、页内位置和注入时钟产生相同记录及 payloadHash；页开始和下一条记录开始前检查控制意图，已开始生成的当前记录仍会交付，整页完成后产生累计检查点。自动化测试通过真实 FastAPI 路由和 PostgreSQL 贯通 tenantKey 换 Token、Job 提交、Agent Session/心跳/claim、批次幂等上传、checkpoint、complete、终态聚合和结果 keyset pagination，并验证 Agent 响应不泄露调用方上下文及事务回滚零残留。测试中的 Agent Actor 不是生产桌面运行时，不代表 Transport、SQLite Spool、Supervisor、Profile 锁或真实双节点已经完成。</div>
+        <div class="callout"><strong>Zhaopin Adapter 实现边界</strong><code>ZhaopinSourceAdapter</code> 已从旧单体采集器迁移搜索 URL、列表/详情选择器、列表字段优先级、招聘人数提取和 sourceJobId 规则，并直接生成共享 <code>ParsedJobRecord</code>；不再依赖旧 PlatformClient、任务字典、上游状态或业务派生字段。浏览器由构造注入的工厂创建，默认使用本机持久化 Chrome/Edge Profile，并在成功、异常或控制退出时关闭。岗位链接导航前统一为 HTTPS，且必须严格属于 <code>zhaopin.com</code>，拒绝 userinfo、外部域、fragment 和非标准端口。默认城市表只保留已有代码可证实的北京/北京市 <code>530</code>，其他编码必须经验证后显式注入。Adapter 检测 <code>passport.zhaopin.com</code>、路径段 <code>/login</code>、登录提示，以及 <code>Security Verification</code>、<code>TEOCaptchaWidget</code>、<code>正在验证连接安全性</code>；无头模式稳定失败，可见模式保持同一个 driver/Profile 等待人工完成，并仅报告 <code>login_required</code>、<code>verification_required</code>、<code>resumed</code>。等待有界且每次轮询检查暂停/取消，不启动第二个浏览器，不上传 Cookie、Profile、页面源码、截图或验证码内容。控制只在页开始和下一条详情开始前检查；已开始读取的详情会完成当前记录，不因中途命令丢弃。8.3 已通过离线 DOM 契约测试；真实线上页面、人工接管、Profile 重启和双执行机验收仍属于 8.4。</div>
+      </section>
+
+      <section id="structure">
+        <h2>09. 新项目结构</h2>
+        <p>项目位于当前仓库的 <code>refactor/</code>，三个 Python 包独立发布，共享纯传输协议，不共享基础设施实现。</p>
+<pre>refactor/
+├── contracts/                       # Pydantic HTTP/Agent contracts
+│   └── src/crawler_contracts/
+│       ├── caller_auth.py           # tenantKey 换取调用方 Token
+│       ├── collection_jobs.py       # 调用方作业请求
+│       ├── agent_protocol.py        # 无 tenant 字段的执行与租约协议
+│       ├── parsed_jobs.py           # 解析后的原始岗位记录
+│       ├── events.py                # 版本化事件信封
+│       └── webhooks.py              # 投递查询与受控重放响应
+├── services/crawler_api/             # FastAPI control plane
+│   ├── Dockerfile
+│   └── src/crawler_api/
+│       ├── api/v1/                   # Public and Agent routes
+│       ├── ops/                      # Trusted-install provisioning utility
+│       ├── application/              # Commands, queries, use cases；含 webhook_operations
+│       ├── domain/                   # State machine and policies
+│       └── infrastructure/
+│           ├── database/             # Repository 与 Alembic 0001-0009 migrations
+│           ├── security/
+│           └── webhooks/
+├── agents/desktop_agent/             # Dedicated execution-machine Agent
+│   └── src/desktop_agent/
+│       ├── credentials.py           # OS keyring credential lifecycle
+│       ├── runtime/                  # Supervisor, lease loop and task control
+│       ├── transport/                # Outbound API client
+│       ├── browser/                  # Browser process supervision and Profile ownership
+│       ├── persistence/              # Local SQLite spool
+│       └── source_adapters/
+│           ├── base.py
+│           ├── fake.py               # 仅内部确定性协议/E2E 测试
+│           └── zhaopin/
+│               └── adapter.py        # 智联 URL、Selenium 选择器与字段映射
+├── tests/                            # Contract, integration, end-to-end
+├── docs/                             # Design and protocol documents
+└── deploy/
+    ├── agent/                        # Interactive task, user service and runbook
+    ├── config/                       # tenantKey 白名单 Secret 示例
+    ├── docker/                       # 开发/生产两套 Compose 拓扑
+    └── examples/                     # 多 Agent 节点环境配置示例</pre>
+        <p>仓库不包含当前平台 Adapter、示例项目领域模型或上游数据库访问代码。调用方集成属于调用方自己的代码库。</p>
+      </section>
+
+      <section id="naming">
+        <h2>10. 命名与代码质量约定</h2>
+        <table>
+          <thead><tr><th>旧概念</th><th>新名称</th><th>调整理由</th></tr></thead>
+          <tbody>
+            <tr><td>crawl run</td><td>collection job</td><td>表达一次对外可控制的采集作业</td></tr>
+            <tr><td>worker</td><td>desktop agent</td><td>表达长期注册、具备桌面浏览器能力的执行节点</td></tr>
+            <tr><td>claimId</td><td>leaseToken</td><td>说明其是租约写凭证而非业务 ID</td></tr>
+            <tr><td>leaseVersion</td><td>fencingToken</td><td>说明其防止旧执行者迟到写入</td></tr>
+            <tr><td>ZhaopinCrawler</td><td>ZhaopinSourceAdapter</td><td>具体网站只是引擎的一种插件</td></tr>
+            <tr><td>canonicalJobs</td><td>删除</td><td>跨来源主数据不属于原始采集职责</td></tr>
+            <tr><td>observations</td><td>parsedJobRecords</td><td>准确表达 API 接收的数据阶段</td></tr>
+          </tbody>
+        </table>
+        <div class="rule-list">
+          <div class="rule"><strong>Python</strong><span>模块、函数和变量使用 snake_case；类型使用 PascalCase；启用 Ruff 和严格 MyPy。</span></div>
+          <div class="rule"><strong>HTTP JSON</strong><span>统一 camelCase；请求 extra=forbid；所有集合和文本配置长度上限。</span></div>
+          <div class="rule"><strong>PostgreSQL</strong><span>表列使用 snake_case；时间统一 timestamptz；ID 不承载业务含义。</span></div>
+          <div class="rule"><strong>领域隔离</strong><span>domain 不导入 FastAPI、SQLAlchemy、Selenium，也不出现任何上游业务名词。</span></div>
+        </div>
+      </section>
+
+      <section id="deployment">
+        <h2>11. 部署与安全</h2>
+        <ul>
+          <li>生产控制中心服务器运行独立的 <code>crawler-api</code> 和 <code>postgres</code> 容器；API 镜像基于 Python 3.12 slim，以非 root 用户运行，不包含 Chromium 或 Agent。</li>
+          <li>生产两个容器加入专用 Docker bridge network。PostgreSQL 不使用 <code>ports</code> 发布 5432，API 通过服务名 <code>postgres</code> 连接；该同主机内部链路按既定方案不启用 TLS。</li>
+          <li>生产 PostgreSQL 使用 18 系列镜像及独立持久卷或绑定数据盘，并制定备份、恢复、容量、监控和升级策略；数据库账号只授予目标 database/schema 所需权限。</li>
+          <li>API 单实例数据库连接池基准容量为 <code>pool_size=10</code>、<code>max_overflow=0</code>，连接按需建立；API、数据库 Session 和生产 PostgreSQL 时区统一为 <code>Asia/Shanghai</code>。</li>
+          <li>开发环境不重复部署 PostgreSQL，使用 <code>POSTGRES_*</code> 配置连接 <code>10.100.11.182:5432/crawler</code>；开发密码通过本地 Secret 或未提交的环境文件注入。</li>
+          <li><code>POSTGRES_SSLMODE</code> 按环境配置：生产同机 Docker 内部链路使用 <code>disable</code>；开发外部数据库的 SSL 模式在连通性验证后确定。</li>
+          <li>Alembic 迁移作为部署前置步骤执行，应用启动不自动修改生产 schema。</li>
+          <li>tenantKey 白名单以只读 Secret 文件挂载到 API 容器，不打入镜像；控制中心不提供租户管理 GUI 或租户增删改公共 API。</li>
+          <li>白名单变更通过受控部署发布并触发事务性同步；被移除或禁用 tenant 的 api_client 和全部未过期 Token 必须同步失效。</li>
+          <li>调用方用白名单 tenantKey 申请短期不透明 Token；Token 哈希和生命周期写入 PostgreSQL。Agent 使用另一套设备密钥换取 Agent Token。</li>
+          <li>Agent 唯一设备身份由控制中心侧 provisioning CLI 在安装前预置；CLI 直接使用运维权限写入 <code>collection_agents</code>，不依赖 Agent Session，不增加人工审批或 tenant 绑定。</li>
+          <li>每台执行机使用不同 deviceSecret，禁止在安装包中嵌入所有机器共用的长期注册密钥；设备长期凭证哈希与短期 Session Token 哈希使用不同密钥域，明文凭证只允许一次性交付并存入操作系统凭据存储。</li>
+          <li>Agent 是全局执行资源，不配置或保存 tenantId；只能领取一个能力匹配的任务，并只能用该任务的有效租约提交检查点和记录。</li>
+          <li>桌面 Agent 至少部署两个独立节点，并可继续横向扩展；每个节点拥有不同的 agentId、deviceSecret、本地 Spool 和 Browser Profile，任一节点离线后由租约恢复机制把任务重新放回全局任务池。</li>
+          <li>Agent 只发起出站 HTTPS；Profile、Cookie 和账号信息不进入中心日志、API 请求或 PostgreSQL。</li>
+          <li>callback URL 支持 HTTP 和 HTTPS，必须精确命中 client 范围内的完整 URL allowlist，且控制面不自动跟随 3xx。HTTP 仅用于受信任内网，跨不受信任网络时配置 HTTPS。DNS/IP 地址固定与 rebinding 防护因当前采用受控 tenant 白名单而延期，作为明确的遗留安全项，不视为已经解决。</li>
+          <li>每个启用回调的 Job 使用独立、默认七天、只允许访问指定 callback API 的 Bearer Token。Token 由上游签发并在创建 Job 的 JSON body 中提交，禁止放入 URL/query。</li>
+          <li>控制面使用独立 AES-256-GCM 密钥保存 Callback Token ciphertext，使用独立 HMAC key 生成本地 fingerprint；明文和可用凭证不得进入 request_payload、事件、Outbox、Agent 载荷、响应、异常或日志。</li>
+          <li>Dispatcher 默认 4 个 worker、10 秒 HTTP 超时、30 秒 claim 租约、最多 8 次请求，参数通过 <code>WEBHOOK_*</code> 环境变量配置；claim 租约必须长于请求超时。</li>
+          <li><code>/internal/metrics</code> 不进入公共 OpenAPI、不接受 tenant Caller Token，并由生产反向代理或网络策略限制为监控网络访问；Prometheus 告警覆盖积压、最老事件、凭证阻塞、永久失败、重试耗尽和频繁 claim 接管。</li>
+          <li>上游负责 Callback Token 的 hash、scope、Job/接口绑定和吊销。0.4 不要求控制面与上游共享 digest 算法，也不使用 <code>WEBHOOK_SIGNING_KEY</code> 代替 Callback Token。</li>
+          <li>执行机使用专用交互式桌面账号；每个 Profile 仅允许一个浏览器进程，Agent Supervisor 负责清理进程树。</li>
+          <li>Windows Agent 以专用用户 Interactive 登录计划任务托管，Linux Agent 以 systemd user service + desktop autostart 托管；配置文件权限收紧且只保存 keyring 定位信息。正常停止先进入 Agent 协作取消和浏览器清理，180 秒超时后托管器才允许强制终止。</li>
+        </ul>
+      </section>
+
+      <section id="verification">
+        <h2>12. 实现顺序与验收门槛</h2>
+        <ol>
+          <li>建立开发/生产数据库环境矩阵：验证开发数据库连通性与权限，冻结生产 PostgreSQL 镜像版本、持久卷、备份恢复、连接数和升级策略。</li>
+          <li>冻结 tenantKey 白名单、白名单同步、provision-agent CLI、设备凭证轮换、Token 申请/吊销、OpenAPI、ParsedJobRecord、错误码、状态机和 webhook 事件版本。</li>
+          <li>在开发数据库的隔离 schema 完成 migration 正向/回滚验证，并在临时生产拓扑中验证全新 PostgreSQL 容器初始化，再实现 Repository、Unit of Work 和作业 API。</li>
+          <li>先完成控制中心侧 Agent 预置工具及审计，再完成 Session、原子领取、独立心跳、租约恢复和 fencing token 并发测试。</li>
+          <li>完成记录幂等上传、稳定游标分页、事件和 Outbox 至少一次投递。</li>
+          <li>已实现桌面 Agent 的 HTTP Transport、Session/heartbeat/claim 循环、SQLite WAL spool、Profile 锁、Supervisor、Adapter 安全点控制、浏览器进程树监督和交互桌面托管模板。WebDriver 关闭异常或超时时，只按 PID 与创建时间回收该任务捕获的根进程及子树，并在进程退出路径结束后释放 Profile 锁；如果无法证明进程树已退出，则保留锁、上报 Profile unavailable，并以 browser_shutdown_failed 释放任务，禁止错误复用 Profile。Windows Interactive 计划任务、Linux systemd user service、系统 keyring、升级回滚和凭证轮换已有实现与手册；真实 Windows/Linux Chrome/Edge、断网/崩溃恢复及双节点验收仍按 8.4 手册执行。</li>
+          <li>已用 FakeSourceAdapter 贯通自动化端到端协议测试，并完成 ZhaopinSourceAdapter 代码、离线登录/安全验证人工继续逻辑及 DOM 契约测试；下一步在真实执行机完成线上页面、Profile 重启和双节点验收，具体入口见 <code>docs/acceptance-8.4.md</code>。</li>
+        </ol>
+        <table>
+          <thead><tr><th>验收主题</th><th>必须证明</th></tr></thead>
+          <tbody>
+            <tr><td>业务解耦</td><td>新项目不引用当前平台代码、数据库和领域名词；任意调用方可按同一 OpenAPI 接入</td></tr>
+            <tr><td>调用方授信</td><td>非白名单 tenantKey 无法签发 Token；Token 过期或吊销后立即不可用；明文 Token 不落库</td></tr>
+            <tr><td>身份域隔离</td><td>Agent 不进入 api_clients、不绑定 tenant；调用方 Token 不能访问 Agent 路由；两类 Token 不能互换</td></tr>
+            <tr><td>Agent 信任引导</td><td>无 Session 时可由受控 CLI 预置 collection_agents；Session 接口不能自动注册未知 agentId；明文 deviceSecret 不落库和日志</td></tr>
+            <tr><td>执行信息最小化</td><td>Agent 任务载荷中不存在 tenantId/clientId/调用方 metadata；控制中心能按 task attempt 追踪每次实际执行者</td></tr>
+            <tr><td>数据边界</td><td>中心端不存在 HTML、截图、Cookie、Profile 和业务派生结果字段</td></tr>
+            <tr><td>幂等与并发</td><td>重复创建、重复上传、双 Agent 抢占和迟到完成均产生确定结果</td></tr>
+            <tr><td>控制可靠性</td><td>运行、登录等待和断网阶段均可暂停或取消；恢复不漏页且允许幂等重采</td></tr>
+            <tr><td>故障恢复</td><td>API 容器、生产 PostgreSQL 容器或 Agent 重启后，任务按 desired_state 和有效租约恢复；开发数据库中断能明确诊断</td></tr>
+            <tr><td>Webhook 凭证边界</td><td>每个 Job 使用独立、默认七天、单接口权限的 Callback Token；控制面只保存 ciphertext 和本地 fingerprint，支持过期/401/403 后轮换；明文 Token 不进入请求快照、事件、Outbox、Agent、响应或日志</td></tr>
+            <tr><td>浏览器实测</td><td>真实执行机完成首次登录、验证接管、Profile 重启恢复和连续采集验收</td></tr>
+          </tbody>
+        </table>
+        <div class="callout warning"><strong>待评审决策</strong>生产 PostgreSQL 镜像版本、持久卷与备份策略，开发数据库 SSL 模式与 schema 权限，以及岗位记录保留期、Agent 最大并发、租约时长和 webhook 重试窗口，应在执行生产 migration 前冻结。详细阶段计划见 <code>docs/implementation-plan.md</code>。</div>
+      </section>
+
+      <div class="footer">岗位数据采集引擎 · 技术实现讨论稿 · 本文档不包含任何具体上游平台集成设计</div>
+    </main>
+  </div>
+</body>
+</html>

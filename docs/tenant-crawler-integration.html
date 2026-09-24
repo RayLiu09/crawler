@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenant 应用接入岗位数据采集引擎方案</title>
+  <style>
+    :root {
+      --ink: #1f2937;
+      --muted: #5b6472;
+      --line: #d8dee8;
+      --soft: #f5f7fa;
+      --blue: #155eef;
+      --blue-soft: #edf4ff;
+      --green: #087443;
+      --green-soft: #eaf8f1;
+      --amber: #9a5b00;
+      --amber-soft: #fff6df;
+      --red: #b42318;
+      --code: #f1f3f5;
+    }
+    * { box-sizing: border-box; }
+    html { background: #eef1f5; }
+    body {
+      max-width: 980px;
+      margin: 0 auto;
+      color: var(--ink);
+      background: #fff;
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .page { min-height: 100vh; padding: 34px 48px 42px; }
+    .page + .page { border-top: 1px solid var(--line); }
+    header { padding-bottom: 18px; border-bottom: 2px solid var(--ink); }
+    .eyebrow { color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+    h1 { margin: 5px 0 6px; font-size: 27px; line-height: 1.25; letter-spacing: 0; }
+    h2 { margin: 22px 0 9px; padding-bottom: 5px; border-bottom: 1px solid var(--line); font-size: 17px; line-height: 1.35; }
+    h3 { margin: 13px 0 5px; font-size: 14px; line-height: 1.35; }
+    p { margin: 0 0 8px; }
+    .lead { max-width: 790px; color: var(--muted); font-size: 14px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 12px; color: var(--muted); font-size: 11px; }
+    .meta strong { color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .box { min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+    .box.blue { border-top: 3px solid var(--blue); background: var(--blue-soft); }
+    .box.green { border-top: 3px solid var(--green); background: var(--green-soft); }
+    .box.amber { border-top: 3px solid var(--amber); background: var(--amber-soft); }
+    .box strong { display: block; margin-bottom: 3px; }
+    .muted { color: var(--muted); }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { padding: 1px 4px; border-radius: 3px; background: var(--code); font-size: .9em; }
+    pre { margin: 8px 0 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: #fbfcfe; font-size: 10.5px; line-height: 1.45; white-space: pre-wrap; }
+    .flow { display: grid; grid-template-columns: 1fr 26px 1fr 26px 1fr; align-items: stretch; gap: 5px; margin: 12px 0 14px; }
+    .flow-step { padding: 10px 9px; border: 1px solid #b9c9e8; border-radius: 5px; background: var(--blue-soft); }
+    .flow-step b { display: block; color: var(--blue); font-size: 11px; }
+    .arrow { display: flex; align-items: center; justify-content: center; color: var(--blue); font-size: 19px; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0 10px; font-size: 11.5px; }
+    th, td { padding: 6px 7px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: var(--soft); font-weight: 800; }
+    .status { display: inline-block; padding: 1px 6px; border-radius: 10px; background: var(--code); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
+    .status.ok { color: var(--green); background: var(--green-soft); }
+    .status.warn { color: var(--amber); background: var(--amber-soft); }
+    .status.bad { color: var(--red); background: #fff0ee; }
+    .callout { margin: 10px 0; padding: 9px 11px; border-left: 4px solid var(--blue); background: var(--blue-soft); }
+    .callout.warning { border-left-color: var(--amber); background: var(--amber-soft); }
+    ol, ul { margin: 6px 0 8px; padding-left: 20px; }
+    li + li { margin-top: 3px; }
+    .small { font-size: 11px; }
+    .footer { margin-top: 18px; color: var(--muted); font-size: 10.5px; }
+    @media print {
+      html, body { background: #fff; }
+      body { max-width: none; font-size: 11.5px; }
+      .page { min-height: 0; height: 136mm; padding: 12mm 13mm 10mm; break-after: page; }
+      .page:last-child { break-after: auto; }
+      h2 { margin-top: 13px; }
+      .box { padding: 8px 10px; }
+      pre { font-size: 9px; }
+    }
+    @media (max-width: 700px) {
+      .page { padding: 24px 20px 30px; }
+      .grid, .grid.three, .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); min-height: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <section class="page">
+    <header>
+      <div class="eyebrow">TENANT INTEGRATION / 0.4</div>
+      <h1>Tenant 应用接入岗位数据采集引擎方案</h1>
+      <p class="lead">面向招聘、人才市场或运营系统的最小接入方案。Tenant 应用只负责提交采集意图、控制作业和消费结果；浏览器登录、页面抓取、解析、租约和重试由 crawler-api 与 desktop-agent 完成。</p>
+      <div class="meta"><span><strong>适用组件：</strong>crawler-api + desktop-agent</span><span><strong>当前来源：</strong>智联招聘（<code>zhaopin</code>）</span><span><strong>数据边界：</strong>仅返回解析后的岗位原始事实</span></div>
+    </header>
+
+    <h2>1. 接入架构与前提</h2>
+    <div class="grid three">
+      <div class="box blue"><strong>Tenant 应用</strong><span class="muted">持有 Caller Token；创建 Job、读取状态/记录、执行控制。</span></div>
+      <div class="box green"><strong>crawler-api 控制面</strong><span class="muted">按 tenant 隔离数据；拆分 query 为 Task，维护状态、事件、租约和记录。</span></div>
+      <div class="box amber"><strong>desktop-agent 执行面</strong><span class="muted">出站轮询领取 Task；使用本机浏览器 Profile 抓取并批量上传记录。</span></div>
+    </div>
+    <div class="callout"><strong>认证与权限：</strong>所有 Tenant 请求使用 <code>Authorization: Bearer &lt;Caller Token&gt;</code>。创建需 <code>collection:write</code>，查询需 <code>collection:read</code>，暂停/恢复/取消及回调 Token 轮换需 <code>collection:control</code>。Agent 使用独立的设备凭证和 Session，不与 Tenant Token 混用。</div>
+
+    <h2>2. 采集任务生命周期</h2>
+    <div class="flow">
+      <div class="flow-step"><b>① 提交</b>POST Job，服务端校验租户、来源和回调，按 query 拆 Task。</div>
+      <div class="arrow">›</div>
+      <div class="flow-step"><b>② 执行</b>Agent claim Task，租约有效期内分页抓取、checkpoint、上传记录并续租。</div>
+      <div class="arrow">›</div>
+      <div class="flow-step"><b>③ 结算</b>Task 完成后聚合作业；所有 Task 结束时产生终态事件。</div>
+    </div>
+    <h3>2.1 创建作业</h3>
+    <pre>POST /v1/collection-jobs
+Authorization: Bearer &lt;caller-token&gt;
+Idempotency-Key: tenant-a:collect:01K5...
+{
+  "externalRequestId": "recruit-20260923-001",
+  "source": "zhaopin",
+  "queries": [{"keyword":"Java 后端","region":"上海","pageLimit":10}],
+  "collectionMode": "full",
+  "metadata": {"campaign":"autumn"}
+}</pre>
+    <p class="small muted">返回 <code>202 Accepted</code>、<code>collectionJobId</code> 和 <code>status=queued</code>。同一业务请求的重试必须复用 <code>Idempotency-Key</code> 与 <code>externalRequestId</code>；参数改变会得到 <code>409</code>，不能借此创建第二个作业。</p>
+
+    <h3>2.2 状态与控制</h3>
+    <table>
+      <thead><tr><th>状态</th><th>含义 / Tenant 行为</th><th>允许的下一步</th></tr></thead>
+      <tbody>
+        <tr><td><span class="status">queued</span></td><td>作业已接受，Task 等待 Agent。</td><td>可暂停或取消。</td></tr>
+        <tr><td><span class="status">running</span></td><td>至少一个 Task 正在执行；可能短暂进入 <code>awaiting_human</code> 等待浏览器登录或验证。</td><td>可暂停、恢复（仅暂停态）、取消。</td></tr>
+        <tr><td><span class="status warn">pausing / cancelling</span></td><td>控制意图已写入，等待 Agent 在 checkpoint 处响应；属于最终落地前的过渡态。</td><td>轮询直到 <code>paused</code> 或 <code>cancelled</code>。</td></tr>
+        <tr><td><span class="status">paused</span></td><td>已保存页码 checkpoint，不再领取/执行新页。</td><td>恢复：重新排队并从 checkpoint 继续；也可取消。</td></tr>
+        <tr><td><span class="status ok">succeeded / partially_succeeded / failed / cancelled</span></td><td>终态，记录集可读取；部分成功同时查看 <code>failureCodeCounts</code>。</td><td>只读；不能再次控制。</td></tr>
+      </tbody>
+    </table>
+    <p class="small">控制接口：<code>POST /v1/collection-jobs/{jobId}/pause</code>、<code>/resume</code>、<code>/cancel</code>。查询聚合状态：<code>GET /v1/collection-jobs/{jobId}</code>，其中 <code>taskStatusCounts</code>、<code>processedCount</code>、<code>version</code> 是进度和并发观测依据；需要审计或补偿时可用 <code>GET /v1/collection-jobs/{jobId}/events</code> 游标读取事件。控制是幂等的；终态作业控制返回 <code>409</code>。</p>
+  </section>
+
+  <section class="page">
+    <h2>3. 如何获取采集到的岗位数据集</h2>
+    <p>推荐把 crawler-api 作为“原始岗位事实集”服务：作业进入终态后读取，或在运行中按固定间隔增量读取。接口使用服务端 <code>createdAt + recordId</code> 的 keyset 游标，不能自行解码或拼接游标，也不应使用 OFFSET。</p>
+    <pre>GET /v1/collection-jobs/{jobId}/records?limit=200&amp;cursor=&lt;nextCursor&gt;
+Authorization: Bearer &lt;caller-token&gt;
+
+{
+  "items": [{
+    "recordId": "...", "source": "zhaopin", "sourceJobId": "...",
+    "sourceUrl": "https://www.zhaopin.com/jobdetail/...",
+    "keyword": "Java 后端", "region": "上海", "page": 2,
+    "fields": {"title":"Java 工程师", "companyName":"...", "salaryText":"...", "description":"..."},
+    "collectedAt": "2026-09-23T09:10:00+08:00", "payloadHash": "sha256:...",
+    "taskId": "...", "createdAt": "2026-09-23T09:10:04+08:00"
+  }],
+  "nextCursor": "..."
+}</pre>
+    <div class="grid">
+      <div class="box green"><strong>拉取策略</strong><ol><li>先读 Job，确认 <code>status</code> 与 <code>processedCount</code>。</li><li>以 <code>limit=200</code> 首次请求；持久化 <code>nextCursor</code>，直到返回 <code>null</code>。</li><li>按 <code>recordId</code> 或 <code>sourceUrl + payloadHash</code> 做本地幂等，不用 <code>collectedAt</code> 排序。</li></ol></div>
+      <div class="box blue"><strong>字段使用</strong><span class="muted"><code>fields</code> 是业务可消费内容；<code>sourceJobId/sourceUrl</code> 用于来源追溯；<code>keyword/region/page</code> 保留查询上下文；<code>payloadHash</code> 用于内容去重和变更检测。引擎不提供跨来源 canonical job。</span></div>
+    </div>
+
+    <h2>4. 事件通知（可选）与可靠性</h2>
+    <p>需要低延迟时，在创建 Job 时配置 <code>callback</code>：提交 Tenant 应用的 HTTP/HTTPS 回调 URL（跨不可信网络推荐 HTTPS）、短期 Bearer Token 和可选 <code>expiresAt</code>（默认 7 天）。URL 必须命中该 tenant 的 allowlist；Token 只用于该 Job 的回调，不是 Caller Token。</p>
+    <table>
+      <thead><tr><th>事件</th><th>触发时机</th><th>Tenant 处理</th></tr></thead>
+      <tbody>
+        <tr><td><code>collection.job.accepted</code></td><td>Job 创建并拆分 Task 后。</td><td>记录 <code>collectionJobId</code>，开始查询。</td></tr>
+        <tr><td><code>collection.job.desired_state_changed</code></td><td>暂停、恢复、取消请求被受理。</td><td>以 Job 查询结果为准，不把事件视为已完成。</td></tr>
+        <tr><td><code>collection.job.terminal</code></td><td>进入 succeeded、partially_succeeded、failed 或 cancelled。</td><td>触发全量游标拉取，保存终态和失败码。</td></tr>
+      </tbody>
+    </table>
+    <p class="small muted">Webhook 是至少一次投递：Tenant 必须按 <code>eventId</code> 幂等，2xx 才代表已接收；控制面会对网络错误、408/429/5xx 有界重试，401/403 标记凭证阻塞。投递失败可用 <code>GET /{jobId}/webhook-deliveries</code> 诊断，并通过 <code>POST /{jobId}/webhook-deliveries/{outboxId}/replay</code> 受控重放。</p>
+
+    <h2>5. 最小接入清单</h2>
+    <div class="grid">
+      <div class="box"><strong>应用侧必须实现</strong><ul><li>Caller Token 安全存储与按 scope 分发。</li><li>创建请求的 Idempotency-Key 复用、超时重试和 401/403/409/422 分流。</li><li>Job 状态轮询或 Callback 接收；终态后完整拉取记录分页。</li><li>本地以 <code>eventId</code>、<code>recordId</code> 去重，并保存游标和原始响应。</li></ul></div>
+      <div class="box"><strong>上线前验证</strong><ul><li>为目标 tenant 配置 callback URL allowlist（如使用回调）。</li><li>确认 desktop-agent 已登录目标来源，Profile 状态为 <code>ready</code>。</li><li>用 1 个 query、1 页数据完成提交、暂停、恢复、取消和终态读取演练。</li><li>定义岗位记录保留期、失败告警阈值和 webhook 永久失败处理人。</li></ul></div>
+    </div>
+    <div class="callout warning"><strong>边界提醒：</strong>Agent 不接触 tenant 身份、回调配置或业务 metadata；浏览器 Cookie/Profile 只保留在执行节点。Tenant 应用不要依赖页面 HTML、截图或未在 <code>ParsedJobRecord</code> 合同中声明的字段。</div>
+    <div class="footer">接口前缀以部署环境为准；本文对应 crawler-api 当前 v1 合同。建议将 API schema、错误码和状态机作为联调验收基线。</div>
+  </section>
+</body>
+</html>

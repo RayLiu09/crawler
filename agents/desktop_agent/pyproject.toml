@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "desktop-collection-agent"
+version = "0.2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "crawler-contracts",
+  "httpx>=0.28,<1",
+  "keyring>=25,<26",
+  "psutil>=7,<8",
+  "pydantic-settings>=2.8,<3",
+  "secretstorage>=3.3,<4; sys_platform == 'linux'",
+  "selenium>=4.29,<5",
+]
+
+[project.scripts]
+desktop-collection-agent = "desktop_agent.main:main"
+desktop-collection-agent-check-config = "desktop_agent.config:main"
+desktop-collection-agent-credential = "desktop_agent.credentials:main"
+
+[tool.uv.sources]
+crawler-contracts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/desktop_agent"]

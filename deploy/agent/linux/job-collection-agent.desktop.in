@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Job Collection Agent
+Comment=Start the supervised desktop collection runtime
+Exec="@LAUNCHER@"
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

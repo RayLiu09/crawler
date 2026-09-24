@@ -1,0 +1,12 @@
+version: 1
+tenants:
+  - tenantId: upstream-application-a
+    displayName: Upstream application A
+    enabled: true
+    tenantKeyHashes:
+      - sha256:0000000000000000000000000000000000000000000000000000000000000000
+    # scopes is optional. Omission grants all current API scopes:
+    # collection:write, collection:read, collection:control.
+    callbackAllowlist:
+      # Both HTTP and HTTPS are supported; use HTTP only on a trusted internal network.
+      - http://upstream.internal/api/job-collection/events

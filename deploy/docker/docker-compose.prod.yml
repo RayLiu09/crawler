@@ -1,0 +1,87 @@
+name: job-collection-engine
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-18.1-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-crawler}
+      POSTGRES_USER: ${POSTGRES_USERNAME:-crawler}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be supplied securely}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    command: ["postgres", "-c", "timezone=Asia/Shanghai"]
+    volumes:
+      - crawler-postgres-data:/var/lib/postgresql
+    networks:
+      - crawler-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    build:
+      context: ../..
+      dockerfile: services/crawler_api/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-environment
+      POSTGRES_DRIVER: postgresql
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-crawler}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-crawler}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be supplied securely}
+      POSTGRES_SSLMODE: disable
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-0}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-30}
+      DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      DATABASE_CONNECT_TIMEOUT_SECONDS: ${DATABASE_CONNECT_TIMEOUT_SECONDS:-10}
+      APP_TIMEZONE: Asia/Shanghai
+      TZ: Asia/Shanghai
+      TENANT_ALLOWLIST_PATH: /run/secrets/tenant-allowlist.yml
+      API_TOKEN_HASH_KEY: ${API_TOKEN_HASH_KEY:?API_TOKEN_HASH_KEY must be supplied securely}
+      AGENT_DEVICE_CREDENTIAL_HASH_KEY: ${AGENT_DEVICE_CREDENTIAL_HASH_KEY:?AGENT_DEVICE_CREDENTIAL_HASH_KEY must be supplied securely}
+      AGENT_TOKEN_HASH_KEY: ${AGENT_TOKEN_HASH_KEY:?AGENT_TOKEN_HASH_KEY must be supplied securely}
+      CALLBACK_TOKEN_ENCRYPTION_KEY: ${CALLBACK_TOKEN_ENCRYPTION_KEY:?CALLBACK_TOKEN_ENCRYPTION_KEY must be supplied securely}
+      CALLBACK_TOKEN_FINGERPRINT_KEY: ${CALLBACK_TOKEN_FINGERPRINT_KEY:?CALLBACK_TOKEN_FINGERPRINT_KEY must be supplied securely}
+      CALLBACK_TOKEN_ENCRYPTION_KEY_VERSION: ${CALLBACK_TOKEN_ENCRYPTION_KEY_VERSION:-v1}
+    volumes:
+      - ${TENANT_ALLOWLIST_FILE:?TENANT_ALLOWLIST_FILE must reference the production allowlist}:/run/secrets/tenant-allowlist.yml:ro
+    networks:
+      - crawler-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  crawler-api:
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    build:
+      context: ../..
+      dockerfile: services/crawler_api/Dockerfile
+    environment:
+      <<: *api-environment
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+      WEBHOOK_METRICS_ENABLED: ${WEBHOOK_METRICS_ENABLED:-true}
+    volumes:
+      - ${TENANT_ALLOWLIST_FILE:?TENANT_ALLOWLIST_FILE must reference the production allowlist}:/run/secrets/tenant-allowlist.yml:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - crawler-internal
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+networks:
+  crawler-internal:
+    driver: bridge
+
+volumes:
+  crawler-postgres-data:

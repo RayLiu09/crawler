@@ -1,0 +1,61 @@
+groups:
+  - name: crawler-webhook-dispatcher
+    rules:
+      - alert: CrawlerWebhookBacklogHigh
+        expr: crawler_webhook_outbox_pending > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Webhook Outbox backlog exceeds 100 pending events
+
+      - alert: CrawlerWebhookOldestPendingTooOld
+        expr: crawler_webhook_outbox_oldest_pending_age_seconds > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Oldest pending webhook has waited more than 15 minutes
+
+      - alert: CrawlerWebhookCredentialBlocked
+        expr: crawler_webhook_outbox_credential_blocked > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Webhook delivery is waiting for Callback Token rotation
+
+      - alert: CrawlerWebhookRetryExhausted
+        expr: increase(crawler_webhook_retry_exhausted_total[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: One or more webhook deliveries exhausted their retry budget
+
+      - alert: CrawlerWebhookPermanentFailure
+        expr: increase(crawler_webhook_delivery_total{result="permanently_failed"}[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: One or more webhook deliveries failed permanently
+
+      - alert: CrawlerWebhookClaimRecoveryHigh
+        expr: increase(crawler_webhook_claim_recovered_total[15m]) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Webhook dispatch claims are frequently expiring before settlement
+
+      - alert: CrawlerWebhookStaleSettlementHigh
+        expr: increase(crawler_webhook_stale_settlement_total[15m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Webhook settlements are frequently losing claim ownership
+
+      - alert: CrawlerWebhookDispatcherErrors
+        expr: increase(crawler_webhook_dispatcher_error_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Webhook Dispatcher encountered an unexpected iteration failure

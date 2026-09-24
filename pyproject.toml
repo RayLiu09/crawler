@@ -1,0 +1,35 @@
+[project]
+name = "job-collection-engine-workspace"
+version = "0.2.0"
+requires-python = ">=3.12,<3.13"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "ruff>=0.11,<1",
+  "types-psutil>=7,<8",
+]
+
+[tool.uv.workspace]
+members = [
+  "contracts",
+  "services/crawler_api",
+  "agents/desktop_agent",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "services/crawler_api/tests", "agents/desktop_agent/tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

@@ -1,0 +1,52 @@
+name: job-collection-engine
+
+services:
+  migrate:
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    build:
+      context: ../..
+      dockerfile: services/crawler_api/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-environment
+      POSTGRES_DRIVER: ${POSTGRES_DRIVER:-postgresql}
+      POSTGRES_HOST: ${POSTGRES_HOST:-10.100.11.182}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-crawler}
+      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-postgres_normal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be supplied securely}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-0}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-30}
+      DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      DATABASE_CONNECT_TIMEOUT_SECONDS: ${DATABASE_CONNECT_TIMEOUT_SECONDS:-10}
+      APP_TIMEZONE: Asia/Shanghai
+      TZ: Asia/Shanghai
+      TENANT_ALLOWLIST_PATH: /run/secrets/tenant-allowlist.yml
+      API_TOKEN_HASH_KEY: ${API_TOKEN_HASH_KEY:?API_TOKEN_HASH_KEY must be supplied securely}
+      AGENT_DEVICE_CREDENTIAL_HASH_KEY: ${AGENT_DEVICE_CREDENTIAL_HASH_KEY:?AGENT_DEVICE_CREDENTIAL_HASH_KEY must be supplied securely}
+      AGENT_TOKEN_HASH_KEY: ${AGENT_TOKEN_HASH_KEY:?AGENT_TOKEN_HASH_KEY must be supplied securely}
+      CALLBACK_TOKEN_ENCRYPTION_KEY: ${CALLBACK_TOKEN_ENCRYPTION_KEY:?CALLBACK_TOKEN_ENCRYPTION_KEY must be supplied securely}
+      CALLBACK_TOKEN_FINGERPRINT_KEY: ${CALLBACK_TOKEN_FINGERPRINT_KEY:?CALLBACK_TOKEN_FINGERPRINT_KEY must be supplied securely}
+      CALLBACK_TOKEN_ENCRYPTION_KEY_VERSION: ${CALLBACK_TOKEN_ENCRYPTION_KEY_VERSION:-v1}
+    volumes:
+      - ${TENANT_ALLOWLIST_FILE:-../config/tenant-allowlist.example.yml}:/run/secrets/tenant-allowlist.yml:ro
+    restart: "no"
+
+  crawler-api:
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    build:
+      context: ../..
+      dockerfile: services/crawler_api/Dockerfile
+    environment:
+      <<: *api-environment
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+    volumes:
+      - ${TENANT_ALLOWLIST_FILE:-../config/tenant-allowlist.example.yml}:/run/secrets/tenant-allowlist.yml:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
