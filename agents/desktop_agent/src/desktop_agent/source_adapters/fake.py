@@ -12,7 +12,7 @@ from pydantic import HttpUrl
 
 from .base import CollectionControl
 
-MAX_PAGE_LIMIT = 30
+MAX_PAGE_LIMIT = 50
 
 
 class FakeSourceAdapter:

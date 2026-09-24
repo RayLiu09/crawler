@@ -147,6 +147,7 @@ def default_adapter_factory(
     *,
     browser_name: Literal["auto", "chrome", "edge"] = "chrome",
     browser_shutdown_timeout_seconds: float = 10,
+    zhaopin_max_page_limit: int = 50,
 ) -> SourceAdapter:
     if source is not SourceCode.ZHAOPIN:
         raise ValueError(f"no desktop adapter registered for source {source.value}")
@@ -155,6 +156,7 @@ def default_adapter_factory(
             profile_directory=profile_directory,
             browser_name=browser_name,
             headless=False,
+            max_page_limit=zhaopin_max_page_limit,
         ),
         human_intervention_reporter=reporter,
         process_supervisor=BrowserProcessSupervisor(
@@ -211,6 +213,7 @@ class AgentSupervisor:
                     browser_shutdown_timeout_seconds=(
                         settings.browser_shutdown_timeout_seconds
                     ),
+                    zhaopin_max_page_limit=settings.zhaopin_max_page_limit,
                 )
 
             self._adapter_factory = configured_adapter_factory
@@ -222,6 +225,7 @@ class AgentSupervisor:
         self._profile_status: Literal["ready", "busy", "login_required", "unavailable"] = "ready"
         self._stop = asyncio.Event()
         self._active_control: RuntimeControl | None = None
+        self._adapters: dict[tuple[SourceCode, Path], SourceAdapter] = {}
 
     async def run(self) -> None:
         await self._issue_session()
@@ -241,6 +245,11 @@ class AgentSupervisor:
             self._stop.set()
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
+            for adapter in self._adapters.values():
+                close = getattr(adapter, "close", None)
+                if close is not None:
+                    close()
+            self._adapters.clear()
 
     async def stop(self) -> None:
         self._stop.set()
@@ -339,6 +348,7 @@ class AgentSupervisor:
         profile_directory = (
             self._settings.browser_profile_root / lease.source.value / lease.profile_key
         )
+        adapter_key = (lease.source, profile_directory)
         lock = ProfileLock(
             self._settings.agent_data_dir / "profile-locks",
             source=lease.source.value,
@@ -422,6 +432,19 @@ class AgentSupervisor:
             self._active_control = None
             lease_task.cancel()
             await asyncio.gather(lease_task, return_exceptions=True)
+            adapter = self._adapters.pop(adapter_key, None)
+            if adapter is not None:
+                close = getattr(adapter, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        LOGGER.exception(
+                            "browser cleanup failed task_id=%s attempt_id=%s",
+                            lease.task_id,
+                            lease.attempt_id,
+                        )
+                        self._profile_status = "unavailable"
             if release_profile_lock:
                 lock.release()
             self._spool.clear_task(lease.task_id)
@@ -440,12 +463,16 @@ class AgentSupervisor:
         def reporter(kind: str, _url: str) -> None:
             self._profile_status = "login_required" if kind != "resumed" else "busy"
 
-        adapter = self._adapter_factory(
-            state.lease.source,
-            profile_directory,
-            reporter,
-            profile_lock.associate_process_tree,
-        )
+        adapter_key = (state.lease.source, profile_directory)
+        adapter = self._adapters.get(adapter_key)
+        if adapter is None:
+            adapter = self._adapter_factory(
+                state.lease.source,
+                profile_directory,
+                reporter,
+                profile_lock.associate_process_tree,
+            )
+            self._adapters[adapter_key] = adapter
         LOGGER.info(
             "adapter collection started task_id=%s source=%s keyword=%r region=%r page_limit=%d",
             state.lease.task_id,

@@ -509,7 +509,7 @@ def test_current_split_dom_parses_job_card_and_company_meta_without_legacy_class
     assert records[0].fields.degree_text == "本科"
     assert records[0].fields.address_text == "西安雁塔区和发智能大厦B座"
     assert records[0].fields.skills_text == "Django, Flask"
-    assert records[0].fields.job_responsibilities_text is None
+    assert records[0].fields.job_responsibilities_text == "参与后端开发"
     assert records[0].fields.job_requirements_text is None
     assert records[0].fields.qualifications_text is None
     assert records[0].fields.other_matters_text is None
@@ -764,6 +764,22 @@ def test_description_sections_are_split_without_losing_full_text() -> None:
         "本科及以上",
         "有爬虫经验",
     )
+
+
+def test_unlabelled_numbered_description_is_preserved_as_responsibilities() -> None:
+    description = "1、业绩利润达成；\n2、客户进销存管理及数据分析；"
+
+    sections = ZhaopinSourceAdapter._split_description_sections(description)
+
+    assert sections == (description, "", "", "")
+
+
+def test_work_responsibilities_alias_is_parsed() -> None:
+    sections = ZhaopinSourceAdapter._split_description_sections(
+        "工作职责\n负责店铺运营\n任职资格\n大专以上"
+    )
+
+    assert sections == ("负责店铺运营", "", "大专以上", "")
 
 
 def test_browser_profile_directory_is_created_and_file_path_is_rejected(

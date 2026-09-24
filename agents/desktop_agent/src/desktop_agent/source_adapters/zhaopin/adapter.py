@@ -30,7 +30,7 @@ from desktop_agent.browser import BrowserProcessSupervisor
 
 from ..base import CollectionControl
 
-MAX_PAGE_LIMIT = 30
+DEFAULT_MAX_PAGE_LIMIT = 50
 LOGGER = logging.getLogger(__name__)
 _CORE_CITY_CODES: Mapping[str, str] = {
     "北京": "530",
@@ -78,11 +78,12 @@ COMPANY_SCALE_PATTERN = re.compile(
     r"(?:少于\s*\d+\s*人|\d+\s*[-至]\s*\d+\s*人|\d+\s*人以上|\d+\s*人以下)"
 )
 DESCRIPTION_SECTION_PATTERN = re.compile(
-    r"^(?P<label>岗位职责|岗位描述|职位描述|工作内容|岗位要求|职位要求|任职资格|任职要求|"
+    r"^(?P<label>岗位职责|工作职责|岗位描述|职位描述|工作内容|岗位要求|职位要求|任职资格|任职要求|"
     r"加分项|加分条件|优先条件|其他事项|其他)\s*[:：]?\s*(?P<inline>.*)$"
 )
 PANEL_LABEL_PATTERN = re.compile(
     r"^(?P<label>薪资|薪酬|职位薪资|工资|工作经验|经验要求|经验|学历要求|学历|"
+    r"工作职责|"
     r"工作地址|工作地点|地址|招聘人数|职位描述|岗位描述|岗位职责|工作内容|任职要求|"
     r"职位要求|任职资格|技能要求|岗位要求|加分项|其他事项|其他)\s*[:：]?\s*(?P<value>.*)$"
 )
@@ -178,6 +179,7 @@ class ZhaopinBrowserConfig:
     page_delay_seconds: float = 2
     human_intervention_timeout_seconds: float = 900
     human_intervention_poll_seconds: float = 3
+    max_page_limit: int = DEFAULT_MAX_PAGE_LIMIT
 
     def __post_init__(self) -> None:
         if self.list_timeout_seconds < 0:
@@ -196,6 +198,8 @@ class ZhaopinBrowserConfig:
             raise ValueError(
                 "human_intervention_poll_seconds cannot exceed human_intervention_timeout_seconds"
             )
+        if self.max_page_limit < 1:
+            raise ValueError("max_page_limit must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +382,8 @@ class ZhaopinSourceAdapter:
         self._monotonic = monotonic
         self._human_intervention_reporter = human_intervention_reporter
         self._process_supervisor = process_supervisor or BrowserProcessSupervisor()
+        self._driver: BrowserDriver | None = None
+        self._process_handle = None
 
     def validate_browser_profile(self) -> None:
         profile_directory = self._config.profile_directory.expanduser()
@@ -403,8 +409,10 @@ class ZhaopinSourceAdapter:
             region,
             page_limit,
         )
-        driver = self._driver_factory(self._config)
-        process_handle = self._process_supervisor.track(driver)
+        if self._driver is None:
+            self._driver = self._driver_factory(self._config)
+            self._process_handle = self._process_supervisor.track(self._driver)
+        driver = self._driver
         processed_count = 0
         seen_urls: set[str] = set()
         try:
@@ -439,13 +447,19 @@ class ZhaopinSourceAdapter:
                 if page < page_limit and self._config.page_delay_seconds:
                     self._sleep(self._config.page_delay_seconds)
         finally:
-            process_handle.close()
             LOGGER.info(
                 "zhaopin collection finished keyword=%r region=%r processed_count=%d",
                 keyword,
                 region,
                 processed_count,
             )
+
+    def close(self) -> None:
+        """Close the shared browser after all queries for this task have run."""
+        if self._process_handle is not None:
+            self._process_handle.close()
+        self._process_handle = None
+        self._driver = None
 
     def build_search_url(self, keyword: str, region: str, page: int) -> str:
         normalized_region = region.strip()
@@ -502,12 +516,12 @@ class ZhaopinSourceAdapter:
         netloc = hostname if port in {None, 80, 443} else f"{hostname}:{port}"
         return urlunsplit(("https", netloc, parsed.path or "/", parsed.query, ""))
 
-    @staticmethod
-    def _validate_query(keyword: str, region: str, page_limit: int) -> None:
+    def _validate_query(self, keyword: str, region: str, page_limit: int) -> None:
         if not keyword.strip():
             raise ValueError("keyword must not be empty")
-        if not 1 <= page_limit <= MAX_PAGE_LIMIT:
-            raise ValueError(f"page_limit must be between 1 and {MAX_PAGE_LIMIT}")
+        max_page_limit = self._config.max_page_limit
+        if not 1 <= page_limit <= max_page_limit:
+            raise ValueError(f"page_limit must be between 1 and {max_page_limit}")
 
     def _load_listings(
         self,
@@ -754,13 +768,14 @@ class ZhaopinSourceAdapter:
             "other": [],
         }
         current: list[str] | None = None
-        for line in (part.strip() for part in text.splitlines()):
+        lines = [part.strip() for part in text.splitlines() if part.strip()]
+        for line in lines:
             if not line:
                 continue
             match = DESCRIPTION_SECTION_PATTERN.match(line)
             if match is not None:
                 label = match.group("label")
-                if label in {"岗位职责", "岗位描述", "职位描述", "工作内容"}:
+                if label in {"岗位职责", "工作职责", "岗位描述", "职位描述", "工作内容"}:
                     current = sections["responsibilities"]
                 elif label in {"岗位要求", "职位要求"}:
                     current = sections["requirements"]
@@ -774,6 +789,20 @@ class ZhaopinSourceAdapter:
                 continue
             if current is not None:
                 current.append(line)
+        # Some source pages omit section headings and expose only numbered or
+        # bulleted responsibility text. Preserve that content in the closest
+        # structured field instead of dropping it from parsed fields.
+        if not any(sections.values()) and lines and any(
+            re.match(r"^(?:\d+\s*[、.．)、)]|[-*•●▪])", line) for line in lines
+        ):
+            bullet = re.compile(r"^(?:\d+\s*[、.．)、)]|[-*•●▪])")
+            first_non_bullet = next(
+                (index for index, line in enumerate(lines) if not bullet.match(line)),
+                len(lines),
+            )
+            sections["responsibilities"].extend(lines[:first_non_bullet])
+            if first_non_bullet < len(lines):
+                sections["other"].extend(lines[first_non_bullet:])
         return (
             "\n".join(sections["responsibilities"]).strip(),
             "\n".join(sections["requirements"]).strip(),
@@ -848,6 +877,7 @@ class ZhaopinSourceAdapter:
             "职位描述": "description",
             "岗位描述": "description",
             "岗位职责": "description",
+            "工作职责": "description",
             "工作内容": "description",
             "任职要求": "skills",
             "任职资格": "qualifications",
@@ -888,6 +918,7 @@ class ZhaopinSourceAdapter:
                 and match.group("label")
                 in {
                     "岗位职责",
+                    "工作职责",
                     "岗位描述",
                     "职位描述",
                     "工作内容",

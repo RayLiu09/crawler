@@ -80,7 +80,7 @@ class TaskLease(ApiModel):
     )
     keyword: str = Field(min_length=1, max_length=120)
     region: str = Field(default="", max_length=80)
-    page_limit: int = Field(ge=1, le=30)
+    page_limit: int = Field(ge=1, le=50)
     page_checkpoint: int = Field(ge=0)
     lease_token: str = Field(min_length=32)
     fencing_token: int = Field(ge=1)
