@@ -40,7 +40,7 @@ class AgentSettings(BaseSettings):
     claim_poll_seconds: float = Field(default=5, gt=0, le=60)
     profile_lock_timeout_seconds: float = Field(default=5, ge=0, le=300)
     browser_shutdown_timeout_seconds: float = Field(default=10, gt=0, le=120)
-    zhaopin_max_page_limit: int = Field(default=50, ge=1, le=1000)
+    zhaopin_max_page_limit: int = Field(default=100, ge=1, le=100)
     shutdown_marker_path: Path | None = None
     spool_batch_size: int = Field(default=100, ge=1, le=200)
     transport_max_attempts: int = Field(default=3, ge=1, le=8)

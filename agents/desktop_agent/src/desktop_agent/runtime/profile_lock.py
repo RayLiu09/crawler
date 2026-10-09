@@ -7,6 +7,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+import psutil
+
 from desktop_agent.browser.processes import (
     OwnedProcessTree,
     ProcessBackend,
@@ -16,13 +18,7 @@ from desktop_agent.browser.processes import (
 
 
 def _pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return psutil.pid_exists(pid)
 
 
 class ProfileLockBusy(RuntimeError):

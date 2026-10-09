@@ -147,7 +147,7 @@ def default_adapter_factory(
     *,
     browser_name: Literal["auto", "chrome", "edge"] = "chrome",
     browser_shutdown_timeout_seconds: float = 10,
-    zhaopin_max_page_limit: int = 50,
+    zhaopin_max_page_limit: int = 100,
 ) -> SourceAdapter:
     if source is not SourceCode.ZHAOPIN:
         raise ValueError(f"no desktop adapter registered for source {source.value}")
@@ -489,6 +489,8 @@ class AgentSupervisor:
                     state.lease.region,
                     state.lease.page_limit,
                     control,
+                    start_page=state.lease.page_checkpoint + 1,
+                    initial_processed_count=state.lease.processed_count,
                 ):
                     events.put(RecordEvent(record))
                 events.put(FinishedEvent())

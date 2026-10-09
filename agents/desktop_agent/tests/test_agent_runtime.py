@@ -51,6 +51,8 @@ class FakeTransport(AgentTransport):
         self.claimed = False
         self.checkpoint_desired_state: str = "running"
         self.lease_renewed = threading.Event()
+        self.page_checkpoint = 0
+        self.processed_count = 0
 
     async def issue_session(self, agent_id: UUID, device_secret: SecretStr) -> AgentSessionResponse:
         assert agent_id == AGENT_ID
@@ -81,7 +83,8 @@ class FakeTransport(AgentTransport):
             keyword="Python",
             region="上海",
             page_limit=2,
-            page_checkpoint=0,
+            page_checkpoint=self.page_checkpoint,
+            processed_count=self.processed_count,
             lease_token=LEASE_TOKEN,
             fencing_token=1,
             lease_expires_at=BASE_TIME + timedelta(minutes=2),
@@ -213,6 +216,30 @@ async def test_supervisor_runs_fake_adapter_through_control_protocol(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_supervisor_resumes_after_accepted_page_without_replaying_it(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.page_checkpoint = 1
+    transport.processed_count = 28
+    supervisor = AgentSupervisor(
+        build_settings(tmp_path),
+        transport=transport,
+        adapter_factory=lambda _source, _profile, _reporter, _process_reporter: (
+            FakeSourceAdapter(records_per_page=1, clock=lambda: BASE_TIME)
+        ),
+    )
+    await supervisor._issue_session()
+
+    assert await supervisor.run_once() is True
+    assert [[record.page for record in upload.records] for upload in transport.uploads] == [[2]]
+    checkpoints = [
+        (request.page_checkpoint, request.processed_count)
+        for request in transport.checkpoints
+    ]
+    assert checkpoints == [(2, 29)]
+    assert [request.outcome for request in transport.completed] == ["completed"]
+
+
+@pytest.mark.asyncio
 async def test_supervisor_uses_renewed_lease_for_runtime_requests(tmp_path: Path) -> None:
     transport = FakeTransport()
 
@@ -223,9 +250,16 @@ async def test_supervisor_uses_renewed_lease_for_runtime_requests(tmp_path: Path
             region: str,
             page_limit: int,
             control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
         ) -> Iterable[ParsedJobRecord]:
             assert transport.lease_renewed.wait(timeout=1)
-            yield from super().collect(keyword, region, page_limit, control)
+            yield from super().collect(
+                keyword, region, page_limit, control,
+                start_page=start_page,
+                initial_processed_count=initial_processed_count,
+            )
 
     supervisor = AgentSupervisor(
         build_settings(tmp_path),
@@ -255,6 +289,9 @@ async def test_supervisor_uses_renewed_lease_when_releasing_failure(tmp_path: Pa
             _region: str,
             _page_limit: int,
             _control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
         ) -> Iterable[ParsedJobRecord]:
             assert transport.lease_renewed.wait(timeout=1)
             raise RuntimeError("simulated collection failure")
@@ -308,6 +345,9 @@ async def test_supervisor_stop_cancels_active_task_and_prevents_new_claims(
             _region: str,
             _page_limit: int,
             control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
         ) -> Iterable[ParsedJobRecord]:
             started.set()
             while True:
@@ -345,6 +385,9 @@ async def test_supervisor_keeps_profile_locked_when_browser_shutdown_is_unproven
             _region: str,
             _page_limit: int,
             _control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
         ) -> Iterable[ParsedJobRecord]:
             raise BrowserShutdownError("simulated browser process remained alive")
             yield  # pragma: no cover

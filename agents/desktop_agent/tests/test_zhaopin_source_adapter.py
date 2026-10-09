@@ -299,6 +299,44 @@ def test_collect_maps_listing_and_detail_to_parsed_record(tmp_path: Path) -> Non
     assert driver.quit_called is True
 
 
+def test_collect_resumes_from_next_page_with_cumulative_count(tmp_path: Path) -> None:
+    second_page_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python&page=2"
+    driver = FakeDriver(
+        {
+            second_page_url: FakeElement(
+                child_lists={ZhaopinSourceAdapter.EMPTY_XPATH: [FakeElement()]}
+            )
+        }
+    )
+    control = RecordingControl()
+
+    records = list(
+        adapter_with_driver(tmp_path, driver).collect(
+            "Python", "上海", 2, control,
+            start_page=2,
+            initial_processed_count=28,
+        )
+    )
+
+    assert records == []
+    assert driver.visited_urls == [second_page_url]
+    assert control.checkpoints == [(2, 28)]
+
+
+def test_collect_does_not_open_browser_after_last_page_checkpoint(tmp_path: Path) -> None:
+    driver = FakeDriver({})
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert list(
+        adapter.collect(
+            "Python", "上海", 2, RecordingControl(),
+            start_page=3,
+            initial_processed_count=28,
+        )
+    ) == []
+    assert driver.visited_urls == []
+
+
 def test_new_search_page_falls_back_to_job_detail_links(tmp_path: Path) -> None:
     search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
     listing_url = "https://www.zhaopin.com/jobdetail/NEW-DOM"
@@ -809,7 +847,7 @@ def test_browser_profile_directory_is_created_and_file_path_is_rejected(
     [
         ("", "上海", 1),
         ("Python", "上海", 0),
-        ("Python", "上海", 31),
+        ("Python", "上海", 101),
     ],
 )
 def test_invalid_query_is_rejected_before_starting_browser(
@@ -830,6 +868,12 @@ def test_invalid_query_is_rejected_before_starting_browser(
     with pytest.raises(ValueError):
         list(adapter.collect(keyword, region, page_limit, RecordingControl()))
     assert driver_started is False
+
+
+def test_zhaopin_browser_page_limit_cannot_exceed_contract(tmp_path: Path) -> None:
+    assert ZhaopinBrowserConfig(profile_directory=tmp_path).max_page_limit == 100
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        ZhaopinBrowserConfig(profile_directory=tmp_path, max_page_limit=101)
 
 
 def login_prompt_page() -> FakeElement:

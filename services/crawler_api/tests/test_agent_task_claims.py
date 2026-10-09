@@ -360,6 +360,19 @@ async def test_claim_assigns_task_profile_lease_and_attempt_atomically() -> None
     assert unit_of_work.commit_count == 1
 
 
+async def test_claim_exposes_authoritative_resume_position() -> None:
+    unit_of_work = build_unit_of_work()
+    task = unit_of_work.collection_tasks.task
+    assert task is not None
+    task.page_checkpoint = 5
+    task.processed_count = 28
+
+    lease = await claim(build_claimer(unit_of_work))
+
+    assert lease is not None
+    assert (lease.page_checkpoint, lease.processed_count) == (5, 28)
+
+
 async def test_same_claim_request_replays_identical_active_lease() -> None:
     unit_of_work = build_unit_of_work()
     claimer = build_claimer(unit_of_work)
@@ -488,6 +501,7 @@ def route_lease() -> TaskLease:
         region="Beijing",
         page_limit=10,
         page_checkpoint=0,
+        processed_count=0,
         lease_token="lse_abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG",
         fencing_token=1,
         lease_expires_at=CLAIMED_AT + timedelta(seconds=120),
@@ -524,6 +538,7 @@ async def test_claim_route_returns_lease_or_no_content() -> None:
     assert claimed.status_code == 200
     assert claimed.json()["attemptId"] == str(CLAIM_REQUEST_ID)
     assert claimed.json()["profileKey"] == "primary"
+    assert claimed.json()["processedCount"] == 0
     assert empty.status_code == 204
     assert empty.content == b""
 

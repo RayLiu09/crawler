@@ -12,7 +12,7 @@ JsonScalar = str | int | float | bool | None
 class CollectionQuery(ApiModel):
     keyword: str = Field(min_length=1, max_length=120)
     region: str = Field(default="", max_length=80)
-    page_limit: int = Field(default=10, ge=1, le=50)
+    page_limit: int = Field(default=10, ge=1, le=100)
 
 
 class CollectionJobPayload(ApiModel):

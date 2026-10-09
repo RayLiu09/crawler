@@ -14,7 +14,7 @@ from desktop_agent.browser import (
     ProcessIdentity,
     PsutilProcessBackend,
 )
-from desktop_agent.runtime.profile_lock import ProfileLock
+from desktop_agent.runtime.profile_lock import ProfileLock, _pid_is_alive
 
 ROOT = ProcessIdentity(pid=4101, created_at=100.0)
 CHILD = ProcessIdentity(pid=4102, created_at=101.0)
@@ -47,6 +47,24 @@ class FakeDriver:
 
     def quit(self) -> None:
         self._quit_callback()
+
+
+def test_profile_lock_pid_check_uses_cross_platform_process_lookup(monkeypatch) -> None:
+    seen: list[int] = []
+
+    def pid_exists(pid: int) -> bool:
+        seen.append(pid)
+        return pid == 42
+
+    def unsupported_kill(_pid: int, _signal: int) -> None:
+        raise OSError(87, "invalid parameter")
+
+    monkeypatch.setattr("desktop_agent.runtime.profile_lock.psutil.pid_exists", pid_exists)
+    monkeypatch.setattr("desktop_agent.runtime.profile_lock.os.kill", unsupported_kill)
+
+    assert _pid_is_alive(42) is True
+    assert _pid_is_alive(999999) is False
+    assert seen == [42, 999999]
 
 
 def test_browser_supervisor_reports_ownership_and_accepts_clean_exit() -> None:

@@ -30,7 +30,7 @@ from desktop_agent.browser import BrowserProcessSupervisor
 
 from ..base import CollectionControl
 
-DEFAULT_MAX_PAGE_LIMIT = 50
+DEFAULT_MAX_PAGE_LIMIT = 100
 LOGGER = logging.getLogger(__name__)
 _CORE_CITY_CODES: Mapping[str, str] = {
     "北京": "530",
@@ -198,8 +198,8 @@ class ZhaopinBrowserConfig:
             raise ValueError(
                 "human_intervention_poll_seconds cannot exceed human_intervention_timeout_seconds"
             )
-        if self.max_page_limit < 1:
-            raise ValueError("max_page_limit must be positive")
+        if not 1 <= self.max_page_limit <= DEFAULT_MAX_PAGE_LIMIT:
+            raise ValueError(f"max_page_limit must be between 1 and {DEFAULT_MAX_PAGE_LIMIT}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,8 +400,15 @@ class ZhaopinSourceAdapter:
         region: str,
         page_limit: int,
         control: CollectionControl,
+        *,
+        start_page: int = 1,
+        initial_processed_count: int = 0,
     ) -> Iterable[ParsedJobRecord]:
         self._validate_query(keyword, region, page_limit)
+        if not 1 <= start_page <= page_limit + 1 or initial_processed_count < 0:
+            raise ValueError("invalid collection resume position")
+        if start_page > page_limit:
+            return
         self.validate_browser_profile()
         LOGGER.info(
             "zhaopin collection started keyword=%r region=%r page_limit=%d",
@@ -413,10 +420,10 @@ class ZhaopinSourceAdapter:
             self._driver = self._driver_factory(self._config)
             self._process_handle = self._process_supervisor.track(self._driver)
         driver = self._driver
-        processed_count = 0
+        processed_count = initial_processed_count
         seen_urls: set[str] = set()
         try:
-            for page in range(1, page_limit + 1):
+            for page in range(start_page, page_limit + 1):
                 control.raise_if_control_requested()
                 listings = self._load_listings(
                     driver, keyword, region, page, seen_urls, control

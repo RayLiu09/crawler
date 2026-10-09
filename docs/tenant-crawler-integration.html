@@ -121,7 +121,7 @@ Idempotency-Key: tenant-a:collect:01K5...
   "collectionMode": "full",
   "metadata": {"campaign":"autumn"}
 }</pre>
-    <p class="small muted">返回 <code>202 Accepted</code>、<code>collectionJobId</code> 和 <code>status=queued</code>。同一业务请求的重试必须复用 <code>Idempotency-Key</code> 与 <code>externalRequestId</code>；参数改变会得到 <code>409</code>，不能借此创建第二个作业。</p>
+    <p class="small muted">每个 query 的 <code>pageLimit</code> 范围为 1–100，默认 10。返回 <code>202 Accepted</code>、<code>collectionJobId</code> 和 <code>status=queued</code>。同一业务请求的重试必须复用 <code>Idempotency-Key</code> 与 <code>externalRequestId</code>；参数改变会得到 <code>409</code>，不能借此创建第二个作业。</p>
 
     <h3>2.2 状态与控制</h3>
     <table>

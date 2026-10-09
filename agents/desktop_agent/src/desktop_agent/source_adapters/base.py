@@ -29,4 +29,7 @@ class SourceAdapter(Protocol):
         region: str,
         page_limit: int,
         control: CollectionControl,
+        *,
+        start_page: int = 1,
+        initial_processed_count: int = 0,
     ) -> Iterable[ParsedJobRecord]: ...

@@ -70,6 +70,17 @@ def test_control_checks_and_page_checkpoints_are_deterministic() -> None:
     assert control.checkpoints == [(1, 2), (2, 4), (3, 6)]
 
 
+def test_100_pages_can_be_collected() -> None:
+    control = RecordingControl()
+    adapter = FakeSourceAdapter(records_per_page=1, clock=lambda: COLLECTED_AT)
+
+    records = list(adapter.collect("Python", "Shanghai", 100, control))
+
+    assert len(records) == 100
+    assert records[-1].page == 100
+    assert control.checkpoints[-1] == (100, 100)
+
+
 def test_control_exception_stops_before_next_record() -> None:
     control = RecordingControl(stop_on_check=3)
     adapter = FakeSourceAdapter(records_per_page=2, clock=lambda: COLLECTED_AT)
@@ -91,7 +102,7 @@ def test_control_exception_stops_before_next_record() -> None:
         ("", "Shanghai", 1),
         ("   ", "Shanghai", 1),
         ("Python", "Shanghai", 0),
-        ("Python", "Shanghai", 31),
+        ("Python", "Shanghai", 101),
     ],
 )
 def test_invalid_collection_query_is_rejected(

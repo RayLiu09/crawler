@@ -12,7 +12,7 @@ from pydantic import HttpUrl
 
 from .base import CollectionControl
 
-MAX_PAGE_LIMIT = 50
+MAX_PAGE_LIMIT = 100
 
 
 class FakeSourceAdapter:
@@ -40,14 +40,19 @@ class FakeSourceAdapter:
         region: str,
         page_limit: int,
         control: CollectionControl,
+        *,
+        start_page: int = 1,
+        initial_processed_count: int = 0,
     ) -> Iterable[ParsedJobRecord]:
         if not keyword.strip():
             raise ValueError("keyword must not be empty")
         if not 1 <= page_limit <= MAX_PAGE_LIMIT:
             raise ValueError(f"page_limit must be between 1 and {MAX_PAGE_LIMIT}")
+        if not 1 <= start_page <= page_limit + 1 or initial_processed_count < 0:
+            raise ValueError("invalid collection resume position")
 
-        processed_count = 0
-        for page in range(1, page_limit + 1):
+        processed_count = initial_processed_count
+        for page in range(start_page, page_limit + 1):
             control.raise_if_control_requested()
             for position in range(1, self._records_per_page + 1):
                 control.raise_if_control_requested()

@@ -1,11 +1,35 @@
 from uuid import uuid4
 
 import pytest
-from crawler_contracts.agent_protocol import AgentCapabilities, AgentHeartbeatRequest
+from crawler_contracts.agent_protocol import AgentCapabilities, AgentHeartbeatRequest, TaskLease
 from crawler_contracts.caller_auth import AccessTokenResponse
-from crawler_contracts.collection_jobs import SubmitCollectionJobRequest
+from crawler_contracts.collection_jobs import CollectionQuery, SubmitCollectionJobRequest
 from crawler_contracts.common import ALL_API_SCOPES
 from pydantic import ValidationError
+
+
+def test_page_limit_is_100_across_submission_and_agent_lease() -> None:
+    assert CollectionQuery(keyword="Python", pageLimit=100).page_limit == 100
+    with pytest.raises(ValidationError):
+        CollectionQuery(keyword="Python", pageLimit=101)
+
+    lease = {
+        "agentId": str(uuid4()),
+        "taskId": str(uuid4()),
+        "attemptId": str(uuid4()),
+        "source": "zhaopin",
+        "profileKey": "primary",
+        "keyword": "Python",
+        "pageLimit": 100,
+        "pageCheckpoint": 0,
+        "processedCount": 0,
+        "leaseToken": "x" * 32,
+        "fencingToken": 1,
+        "leaseExpiresAt": "2026-10-09T12:00:00Z",
+    }
+    assert TaskLease.model_validate(lease).page_limit == 100
+    with pytest.raises(ValidationError):
+        TaskLease.model_validate({**lease, "pageLimit": 101})
 
 
 def test_access_token_requires_explicit_inherited_scope_snapshot() -> None:

@@ -271,6 +271,7 @@ class AgentTaskClaimer:
             region=task.region,
             page_limit=task.page_limit,
             page_checkpoint=task.page_checkpoint,
+            processed_count=task.processed_count,
             lease_token=lease_token,
             fencing_token=task.fencing_token,
             lease_expires_at=task.lease_expires_at,
