@@ -151,6 +151,8 @@ class BrowserDriver(BrowserElement, Protocol):
 
     def get(self, url: str) -> None: ...
 
+    def execute_script(self, script: str, *args: object) -> object: ...
+
     def implicitly_wait(self, time_to_wait: float) -> None: ...
 
     def set_page_load_timeout(self, time_to_wait: float) -> None: ...
@@ -553,9 +555,12 @@ class ZhaopinSourceAdapter:
         listings: list[ZhaopinListing] = []
         for element in self._listing_elements(driver):
             listing = self._parse_listing(element)
-            if listing is None or listing.source_url in seen_urls:
+            if listing is None:
                 continue
-            seen_urls.add(listing.source_url)
+            identity = self.extract_source_job_id(listing.source_url) or listing.source_url
+            if identity in seen_urls:
+                continue
+            seen_urls.add(identity)
             listings.append(listing)
         return listings
 
@@ -615,25 +620,32 @@ class ZhaopinSourceAdapter:
         listing: ZhaopinListing,
         control: CollectionControl,
     ) -> ZhaopinDetail:
-        links = [
-            *driver.find_elements(By.XPATH, self.JOB_LIST_LINK_XPATH),
-            *driver.find_elements(By.XPATH, self.JOB_CARD_XPATH),
-        ]
+        cards = driver.find_elements(By.XPATH, self.JOB_CARD_XPATH)
+        listing_id = self.extract_source_job_id(listing.source_url)
         target = next(
             (
-                link
-                for link in links
+                element
+                for element in cards
                 if (
-                    parsed := self._parse_listing(link)
+                    parsed := self._parse_listing(element)
                 ) is not None
-                and parsed.source_url == listing.source_url
+                and (
+                    parsed.source_url == listing.source_url
+                    or (
+                        listing_id is not None
+                        and self.extract_source_job_id(parsed.source_url) == listing_id
+                    )
+                )
             ),
             None,
         )
         if target is None:
-            return self._load_legacy_detail(driver, listing.source_url, control)
+            LOGGER.warning("zhaopin detail card not found source_url=%s", listing.source_url)
+            return ZhaopinDetail()
         try:
-            target.click()
+            # Dispatch on the card itself so a nested detail anchor cannot
+            # turn the list selection into a new browser tab.
+            driver.execute_script("arguments[0].click()", target)
 
             def detail_ready() -> bool:
                 panel = self._split_detail_panel(driver)
@@ -959,10 +971,7 @@ class ZhaopinSourceAdapter:
         return next((values[label] for label in labels if values.get(label)), "")
 
     def _has_split_search_layout(self, driver: BrowserDriver) -> bool:
-        return bool(
-            driver.find_elements(By.XPATH, self.JOB_LIST_PANEL_XPATH)
-            and driver.find_elements(By.XPATH, self.JOB_DETAIL_PANEL_XPATH)
-        )
+        return bool(driver.find_elements(By.XPATH, self.JOB_LIST_PANEL_XPATH))
 
     def _split_detail_panel(self, driver: BrowserDriver) -> BrowserElement | None:
         panels = driver.find_elements(By.XPATH, self.JOB_DETAIL_PANEL_XPATH)

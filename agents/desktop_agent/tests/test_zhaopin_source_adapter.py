@@ -100,6 +100,12 @@ class FakeDriver(FakeElement):
         self._current_url = url
         self._current_page = self._pages.get(url, FakeElement())
 
+    def execute_script(self, script: str, *args: object) -> object:
+        assert script == "arguments[0].click()"
+        assert isinstance(args[0], FakeElement)
+        args[0].click()
+        return None
+
     def find_element(self, by: str, value: str) -> FakeElement:
         return self._current_page.find_element(by, value)
 
@@ -417,7 +423,7 @@ def test_new_card_wrapper_can_fall_back_to_nested_detail_link(tmp_path: Path) ->
     assert records[0].source_job_id == "NEW-WRAPPER"
 
 
-def test_split_search_layout_clicks_left_item_and_reads_right_detail_panel(
+def test_split_search_layout_does_not_click_detail_link_without_card(
     tmp_path: Path,
 ) -> None:
     search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
@@ -452,8 +458,81 @@ def test_split_search_layout_clicks_left_item_and_reads_right_detail_panel(
 
     assert len(records) == 1
     assert records[0].source_job_id == "SPLIT-PANEL"
+    assert records[0].fields.description is None
+    assert clicked is False
+    assert driver.visited_urls == [search_url]
+
+
+def test_split_search_layout_selects_card_without_opening_detail_link(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    listing_url = "https://www.zhaopin.com/jobdetail/SPLIT-CARD?srccode=401901"
+    clicks: list[str] = []
+    link = FakeElement(
+        "Python 平台工程师",
+        attributes={"href": listing_url},
+        on_click=lambda: clicks.append("link"),
+    )
+    card = FakeElement(
+        attributes={"data-position-id": "SPLIT-CARD"},
+        on_click=lambda: clicks.append("card"),
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 平台工程师"),
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("20K-30K"),
+        },
+    )
+    driver = FakeDriver(
+        {
+            search_url: FakeElement(
+                child_lists={
+                    ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+                    ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [detail_page()],
+                    ZhaopinSourceAdapter.JOB_LIST_LINK_XPATH: [link],
+                    ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
+                }
+            )
+        }
+    )
+
+    records = list(
+        adapter_with_driver(tmp_path, driver).collect("Python", "上海", 1, RecordingControl())
+    )
+
+    assert clicks == ["card"]
+    assert len(records) == 1
+    assert records[0].source_job_id == "SPLIT-CARD"
     assert records[0].fields.description == "负责平台服务开发与维护。"
-    assert clicked is True
+    assert driver.visited_urls == [search_url]
+
+
+def test_split_search_layout_waits_for_detail_panel_after_card_selection(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    card = FakeElement(
+        attributes={"data-position-id": "DELAYED-PANEL"},
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 平台工程师"),
+        },
+    )
+    page = FakeElement(
+        child_lists={
+            ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+            ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
+        }
+    )
+    card._on_click = lambda: page._child_lists.__setitem__(
+        ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH, [detail_page()]
+    )
+    driver = FakeDriver({search_url: page})
+
+    records = list(
+        adapter_with_driver(tmp_path, driver).collect("Python", "上海", 1, RecordingControl())
+    )
+
+    assert len(records) == 1
+    assert records[0].fields.description == "负责平台服务开发与维护。"
     assert driver.visited_urls == [search_url]
 
 
@@ -590,6 +669,12 @@ def test_split_detail_panel_parses_labeled_text_without_legacy_detail_classes(
         )
     )
     link = FakeElement("Python 数据工程师", attributes={"href": listing_url})
+    card = FakeElement(
+        attributes={"data-position-id": "SPLIT-TEXT"},
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 数据工程师"),
+        },
+    )
     driver = FakeDriver(
         {
             search_url: FakeElement(
@@ -597,6 +682,7 @@ def test_split_detail_panel_parses_labeled_text_without_legacy_detail_classes(
                     ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
                     ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [panel],
                     ZhaopinSourceAdapter.JOB_LIST_LINK_XPATH: [link],
+                    ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
                 }
             )
         }
