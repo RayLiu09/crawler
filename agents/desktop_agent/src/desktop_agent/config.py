@@ -12,6 +12,8 @@ from keyring.errors import KeyringError
 from pydantic import Field, HttpUrl, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .source_adapters.zhaopin.city_codes import load_city_codes
+
 
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -41,6 +43,7 @@ class AgentSettings(BaseSettings):
     profile_lock_timeout_seconds: float = Field(default=5, ge=0, le=300)
     browser_shutdown_timeout_seconds: float = Field(default=10, gt=0, le=120)
     zhaopin_max_page_limit: int = Field(default=100, ge=1, le=100)
+    zhaopin_city_codes_file: Path | None = None
     shutdown_marker_path: Path | None = None
     spool_batch_size: int = Field(default=100, ge=1, le=200)
     transport_max_attempts: int = Field(default=3, ge=1, le=8)
@@ -72,6 +75,12 @@ class AgentSettings(BaseSettings):
             if not marker.is_absolute():
                 raise ValueError("shutdown marker path must be absolute")
             self.shutdown_marker_path = marker
+        if self.zhaopin_city_codes_file is not None:
+            city_codes_file = self.zhaopin_city_codes_file.expanduser()
+            if not city_codes_file.is_absolute():
+                raise ValueError("Zhaopin city-code file path must be absolute")
+            load_city_codes(city_codes_file)
+            self.zhaopin_city_codes_file = city_codes_file
         return self
 
     @property

@@ -29,50 +29,10 @@ from selenium.webdriver.common.by import By
 from desktop_agent.browser import BrowserProcessSupervisor
 
 from ..base import CollectionControl
+from .city_codes import load_city_codes
 
 DEFAULT_MAX_PAGE_LIMIT = 100
 LOGGER = logging.getLogger(__name__)
-_CORE_CITY_CODES: Mapping[str, str] = {
-    "北京": "530",
-    "上海": "538",
-    "广州": "763",
-    "深圳": "765",
-    "天津": "531",
-    "重庆": "551",
-    "杭州": "653",
-    "南京": "635",
-    "成都": "801",
-    "武汉": "736",
-    "西安": "854",
-    "苏州": "639",
-    "郑州": "719",
-    "长沙": "749",
-    "东莞": "769",
-    "佛山": "768",
-    "宁波": "656",
-    "青岛": "701",
-    "合肥": "636",
-    "济南": "702",
-    "沈阳": "599",
-    "大连": "600",
-    "厦门": "682",
-    "福州": "681",
-    "昆明": "818",
-    "哈尔滨": "622",
-    "长春": "613",
-    "石家庄": "565",
-    "温州": "660",
-    "无锡": "640",
-    "常州": "641",
-    "珠海": "766",
-    "中山": "767",
-    "惠州": "770",
-}
-DEFAULT_CITY_CODES: Mapping[str, str] = {
-    alias: code
-    for city, code in _CORE_CITY_CODES.items()
-    for alias in (city, f"{city}市")
-}
 HIRING_COUNT_PATTERN = re.compile(r"招\s*\d+\s*人")
 COMPANY_SCALE_PATTERN = re.compile(
     r"(?:少于\s*\d+\s*人|\d+\s*[-至]\s*\d+\s*人|\d+\s*人以上|\d+\s*人以下)"
@@ -364,21 +324,22 @@ class ZhaopinSourceAdapter:
         config: ZhaopinBrowserConfig,
         *,
         driver_factory: BrowserDriverFactory = create_zhaopin_webdriver,
-        city_codes: Mapping[str, str] = DEFAULT_CITY_CODES,
+        city_codes: Mapping[str, str] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleeper: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         human_intervention_reporter: HumanInterventionReporter | None = None,
         process_supervisor: BrowserProcessSupervisor | None = None,
     ) -> None:
-        if not city_codes or any(
+        resolved_city_codes = load_city_codes() if city_codes is None else city_codes
+        if not resolved_city_codes or any(
             not region.strip() or not code.isdecimal()
-            for region, code in city_codes.items()
+            for region, code in resolved_city_codes.items()
         ):
             raise ValueError("city_codes must contain non-empty regions and numeric codes")
         self._config = config
         self._driver_factory = driver_factory
-        self._city_codes = dict(city_codes)
+        self._city_codes = dict(resolved_city_codes)
         self._clock = clock
         self._sleep = sleeper
         self._monotonic = monotonic

@@ -87,6 +87,28 @@ def test_absolute_config_file_is_loaded_without_exposing_secret(tmp_path: Path) 
     assert "s" * 40 not in repr(settings)
 
 
+def test_agent_settings_validate_external_city_code_file(tmp_path: Path) -> None:
+    city_codes_file = tmp_path / "city_codes.json"
+    city_codes_file.write_text('{"南通": "641"}', encoding="utf-8")
+
+    settings = AgentSettings(
+        **base_settings(
+            agent_device_secret=SecretStr("s" * 40),
+            zhaopin_city_codes_file=city_codes_file,
+        )
+    )
+    assert settings.zhaopin_city_codes_file == city_codes_file
+
+    city_codes_file.write_text('{"南通": "bad"}', encoding="utf-8")
+    with pytest.raises(ValidationError, match="invalid Zhaopin city code"):
+        AgentSettings(
+            **base_settings(
+                agent_device_secret=SecretStr("s" * 40),
+                zhaopin_city_codes_file=city_codes_file,
+            )
+        )
+
+
 def test_credential_command_uses_hidden_reader_and_never_prints_secret(capsys) -> None:
     store = MemoryCredentialStore()
     secrets = iter(("x" * 40, "x" * 40))

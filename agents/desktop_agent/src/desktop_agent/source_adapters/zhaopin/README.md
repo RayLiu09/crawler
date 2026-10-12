@@ -19,11 +19,19 @@ or screenshot is created or uploaded. A narrow optional reporter receives only
 The wait has a bounded timeout and checks the collection control on every poll,
 so pause/cancel can terminate it.
 
-The default city-code registry covers the reviewed core first- and second-tier
-city mappings used by the collector, including both `西安` and `西安市` (`854`).
-An empty region deliberately omits `jl` and searches nationwide. Additional
-regions must be supplied from a reviewed mapping and covered by tests; the
-Adapter does not guess codes.
+The default city-code registry is `city_codes.json` in this package. Each entry
+maps a city name without the `市` suffix to its Zhaopin `jl` code; the loader
+automatically accepts both forms. An empty region omits `jl` and searches
+nationwide. The loader rejects malformed JSON, duplicate names or codes, and
+non-numeric codes rather than guessing.
+
+To maintain the mapping outside the installed package, copy `city_codes.json`
+to a persistent location and set `ZHAOPIN_CITY_CODES_FILE` in `agent.env` to its
+absolute path. The external file replaces the bundled mapping, so keep all
+required cities in it. Run
+`desktop-collection-agent-check-config --config <absolute-agent.env>` after editing,
+then restart the Agent. The file is read
+when an adapter is created; a restart also refreshes any cached adapter.
 
 The browser factory uses a persistent local Chrome or Edge user-data directory.
 Job links are normalized to HTTPS and must belong to `zhaopin.com`; userinfo,

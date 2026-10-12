@@ -38,6 +38,7 @@ from desktop_agent.source_adapters.zhaopin import (
     ZhaopinBrowserConfig,
     ZhaopinSourceAdapter,
 )
+from desktop_agent.source_adapters.zhaopin.city_codes import load_city_codes
 
 from .profile_lock import ProfileLock, ProfileLockBusy
 from .spool import LocalSpool
@@ -148,6 +149,7 @@ def default_adapter_factory(
     browser_name: Literal["auto", "chrome", "edge"] = "chrome",
     browser_shutdown_timeout_seconds: float = 10,
     zhaopin_max_page_limit: int = 100,
+    zhaopin_city_codes_file: Path | None = None,
 ) -> SourceAdapter:
     if source is not SourceCode.ZHAOPIN:
         raise ValueError(f"no desktop adapter registered for source {source.value}")
@@ -158,6 +160,7 @@ def default_adapter_factory(
             headless=False,
             max_page_limit=zhaopin_max_page_limit,
         ),
+        city_codes=load_city_codes(zhaopin_city_codes_file),
         human_intervention_reporter=reporter,
         process_supervisor=BrowserProcessSupervisor(
             shutdown_timeout_seconds=browser_shutdown_timeout_seconds,
@@ -214,6 +217,7 @@ class AgentSupervisor:
                         settings.browser_shutdown_timeout_seconds
                     ),
                     zhaopin_max_page_limit=settings.zhaopin_max_page_limit,
+                    zhaopin_city_codes_file=settings.zhaopin_city_codes_file,
                 )
 
             self._adapter_factory = configured_adapter_factory

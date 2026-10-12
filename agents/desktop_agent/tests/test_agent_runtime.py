@@ -27,10 +27,11 @@ from desktop_agent.browser import BrowserShutdownError, OwnedProcessTree
 from desktop_agent.config import AgentSettings
 from desktop_agent.runtime.profile_lock import ProfileLock, ProfileLockBusy
 from desktop_agent.runtime.spool import LocalSpool
-from desktop_agent.runtime.supervisor import AgentSupervisor
+from desktop_agent.runtime.supervisor import AgentSupervisor, default_adapter_factory
 from desktop_agent.runtime.transport import AgentTransport, HttpAgentTransport
 from desktop_agent.source_adapters.base import CollectionControl
 from desktop_agent.source_adapters.fake import FakeSourceAdapter
+from desktop_agent.source_adapters.zhaopin import ZhaopinSourceAdapter
 from pydantic import HttpUrl, SecretStr
 
 AGENT_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -39,6 +40,22 @@ ATTEMPT_ID = UUID("00000000-0000-4000-8000-000000000003")
 SESSION_TOKEN = "agt_runtime_test_session_token_1234567890"
 LEASE_TOKEN = "lease_runtime_test_token_1234567890"
 BASE_TIME = datetime(2026, 9, 20, 12, tzinfo=UTC)
+
+
+def test_default_adapter_factory_uses_external_city_code_file(tmp_path: Path) -> None:
+    city_codes_file = tmp_path / "city_codes.json"
+    city_codes_file.write_text('{"南通": "641"}', encoding="utf-8")
+
+    adapter = default_adapter_factory(
+        SourceCode.ZHAOPIN,
+        tmp_path / "profile",
+        lambda _kind, _url: None,
+        lambda _tree: None,
+        zhaopin_city_codes_file=city_codes_file,
+    )
+
+    assert isinstance(adapter, ZhaopinSourceAdapter)
+    assert "jl=641" in adapter.build_search_url("Python", "南通市", 1)
 
 
 class FakeTransport(AgentTransport):

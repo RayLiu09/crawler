@@ -16,6 +16,7 @@ from desktop_agent.source_adapters.zhaopin import (
     ZhaopinVerificationRequired,
     ZhaopinVerificationTimeout,
 )
+from desktop_agent.source_adapters.zhaopin.city_codes import load_city_codes
 from selenium.common.exceptions import NoSuchElementException
 
 COLLECTED_AT = datetime(2026, 9, 18, 11, 0, tzinfo=UTC)
@@ -863,6 +864,91 @@ def test_search_url_uses_only_injected_verified_city_codes(tmp_path: Path) -> No
             ZhaopinBrowserConfig(profile_directory=tmp_path / "invalid-city-code"),
             city_codes={"上海": "538&kw=override"},
         )
+
+
+@pytest.mark.parametrize(
+    ("region", "city_code"),
+    [
+        ("青岛", "703"),
+        ("青岛市", "703"),
+        ("贵阳", "822"),
+        ("贵阳市", "822"),
+        ("宁波", "654"),
+        ("宁波市", "654"),
+        ("合肥", "664"),
+        ("合肥市", "664"),
+        ("无锡", "636"),
+        ("无锡市", "636"),
+        ("南昌", "691"),
+        ("南昌市", "691"),
+        ("南宁", "785"),
+        ("南宁市", "785"),
+        ("东莞", "779"),
+        ("东莞市", "779"),
+        ("昆明", "831"),
+        ("昆明市", "831"),
+        ("温州", "655"),
+        ("温州市", "655"),
+        ("常州", "638"),
+        ("常州市", "638"),
+        ("南通", "641"),
+        ("南通市", "641"),
+        ("中山", "780"),
+        ("中山市", "780"),
+        ("惠州", "773"),
+        ("惠州市", "773"),
+        ("湛江", "770"),
+        ("湛江市", "770"),
+    ],
+)
+def test_search_url_uses_default_city_codes(
+    tmp_path: Path, region: str, city_code: str
+) -> None:
+    adapter = ZhaopinSourceAdapter(
+        ZhaopinBrowserConfig(profile_directory=tmp_path / "profile"),
+        driver_factory=lambda _config: FakeDriver({}),
+    )
+
+    assert (
+        adapter.build_search_url("无人机", region, 1)
+        == f"https://www.zhaopin.com/jobs?jl={city_code}&pageMode=search&kw=%E6%97%A0%E4%BA%BA%E6%9C%BA"
+    )
+
+
+def test_external_city_code_file_overrides_bundled_mapping(tmp_path: Path) -> None:
+    config_file = tmp_path / "city_codes.json"
+    config_file.write_text('{"无锡": "999"}', encoding="utf-8")
+
+    codes = load_city_codes(config_file)
+    adapter = ZhaopinSourceAdapter(
+        ZhaopinBrowserConfig(profile_directory=tmp_path / "profile"),
+        city_codes=codes,
+        driver_factory=lambda _config: FakeDriver({}),
+    )
+
+    assert codes == {"无锡": "999", "无锡市": "999"}
+    assert "jl=999" in adapter.build_search_url("Python", "无锡市", 1)
+    with pytest.raises(UnsupportedZhaopinRegion):
+        adapter.build_search_url("Python", "上海", 1)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{}",
+        '{"无锡": "636", "南通": "636"}',
+        '{"无锡": "636", "无锡": "640"}',
+        '{"无锡市": "636"}',
+        '{"无锡": "636&kw=override"}',
+        "not JSON",
+    ],
+)
+def test_city_code_file_rejects_invalid_mapping(tmp_path: Path, content: str) -> None:
+    config_file = tmp_path / "city_codes.json"
+    config_file.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_city_codes(config_file)
 
 
 def test_company_meta_supports_omitted_financing() -> None:

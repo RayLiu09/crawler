@@ -59,6 +59,11 @@ AGENT_DEVICE_SECRET_KEYRING_USERNAME=<agentId>
 desktop-collection-agent-check-config --config <absolute-agent.env>
 ```
 
+智联城市代码默认从 Agent 包内的 `city_codes.json` 加载。后续需要调整时，将完整 JSON 表
+复制到持久目录，在 `agent.env` 中设置 `ZHAOPIN_CITY_CODES_FILE=<绝对路径>`。外部文件
+替换默认表，城市名称不带“市”后缀，代码写为数字字符串。编辑后重新运行配置预检，再重启
+Agent；重启前正在运行的进程不会读取新映射。
+
 ## 5. Linux 安装
 
 在已经登录图形桌面的专用用户终端中执行，不能使用 root：
