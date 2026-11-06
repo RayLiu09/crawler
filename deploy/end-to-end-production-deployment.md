@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文用于准备和执行岗位数据采集引擎 0.4 的真实端到端验证环境。它覆盖控制中心、
+本文用于准备和执行岗位数据采集引擎 0.3.0 的真实端到端验证环境。它覆盖控制中心、
 PostgreSQL、验收调用方以及至少两台桌面 Agent 执行机的安装、配置、上线、验证、证据
 留存和回滚。
 
@@ -20,15 +20,14 @@ tenantKey 申请短期 Caller Token，再直接调用正式的 Collection Job AP
 Webhook Dispatcher 可以保持生产默认启用；没有 callback 配置时不会为 Job 产生投递。
 这不等于 Webhook 已通过验收。后续接入上游时必须单独完成回调链路验收。
 
-开始安装前先阅读 [前置制品与环境检查报告](../dist/PREPARATION-REPORT.md)。当前已准备的
-制品为：
+开始安装前按第 6 节构建并校验本次发布制品，保存构建信息和校验清单。制品为：
 
-- `../dist/desktop-agent-windows-x86_64-0.1.0.zip`：Windows x64 / CPython 3.12 Agent
+- `../dist/desktop-agent-windows-x86_64-0.3.0.zip`：Windows x64 / CPython 3.12 Agent
   离线安装包，包含 wheelhouse、Windows 安装脚本和 RUNBOOK；
-- `../dist/crawler-api-0.1.0.tar`：可通过 `docker load` 导入的 crawler-api 镜像包；
-- `../dist/crawler-api-0.1.0.tar.sha256`：镜像包完整性校验文件。
+- `../dist/crawler-api-0.3.0.tar`：可通过 `docker load` 导入的 crawler-api 镜像包；
+- `../dist/crawler-api-0.3.0.tar.sha256`：镜像包完整性校验文件。
 
-制品导入前必须按报告中的 SHA-256 校验；Windows Agent 仍需在真实 Windows x64 主机上
+制品导入前必须按随包发布的 SHA-256 清单校验；Windows Agent 仍需在真实 Windows x64 主机上
 完成一次干净安装和配置预检，Linux 构建机的 wheel 标签检查不能替代该步骤。
 
 相关基线资料：
@@ -51,16 +50,13 @@ Webhook Dispatcher 可以保持生产默认启用；没有 callback 配置时不
 
 | 文件 | 用途 |
 |---|---|
-| `dist/crawler-api-0.1.0.tar` | crawler-api、migration 共用的 Docker 镜像包 |
-| `dist/crawler-api-0.1.0.tar.sha256` | API 镜像包校验值 |
-| `dist/desktop-agent-windows-x86_64-0.1.0.zip` | Windows x64 / CPython 3.12 离线 Agent 安装包 |
-| `dist/desktop-agent-windows-x86_64-0.1.0.zip.sha256` | Agent 安装包校验值 |
+| `dist/crawler-api-0.3.0.tar` | crawler-api、migration 共用的 Docker 镜像包 |
+| `dist/crawler-api-0.3.0.tar.sha256` | API 镜像包校验值 |
+| `dist/desktop-agent-windows-x86_64-0.3.0.zip` | Windows x64 / CPython 3.12 离线 Agent 安装包 |
+| `dist/desktop-agent-windows-x86_64-0.3.0.zip.sha256` | Agent 安装包校验值 |
 
-当前已生成的 Agent ZIP SHA-256 为：
-
-```text
-2916f9711cbd4498965430a760e4532e2643dbc97fd6bd6388eff439ea312729
-```
+Agent ZIP 的 SHA-256 以本次构建生成的
+`dist/desktop-agent-windows-x86_64-0.3.0.zip.sha256` 为准；通过可信发布渠道取得校验值。
 
 ### 部署顺序
 
@@ -248,7 +244,7 @@ install -m 0600 \
 `production.env` 至少补充或确认以下 Compose 参数：
 
 ```dotenv
-CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.1.0
+CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
 POSTGRES_IMAGE_TAG=18.1-alpine
 POSTGRES_DATABASE=crawler
 POSTGRES_USERNAME=crawler
@@ -336,7 +332,7 @@ API 和 migration 使用同一个镜像，镜像标签必须包含版本号，�
 
 ```bash
 cd /workspace/refactor
-export RELEASE_VERSION=0.1.0
+export RELEASE_VERSION=0.3.0
 export CRAWLER_API_IMAGE="job-collection-engine/crawler-api:${RELEASE_VERSION}"
 
 docker build --pull \
@@ -362,7 +358,7 @@ Agent 包必须在可解析 Windows x64 / CPython 3.12 wheel 的构建环境中�
 
 ```bash
 cd /workspace/refactor
-export RELEASE_VERSION=0.1.0
+export RELEASE_VERSION=0.3.0
 export AGENT_STAGE="dist/desktop-agent-windows-x86_64-${RELEASE_VERSION}"
 rm -rf "$AGENT_STAGE" "dist/desktop-agent-windows-x86_64-${RELEASE_VERSION}.zip"
 mkdir -p "$AGENT_STAGE/wheelhouse" "$AGENT_STAGE/agent/windows" "$AGENT_STAGE/examples"
@@ -389,6 +385,7 @@ uv pip compile dist/windows-agent-requirements.in \
   --output-file dist/windows-agent-requirements.txt
 python3.12 -m pip download \
   --requirement dist/windows-agent-requirements.txt \
+  --no-deps \
   --only-binary=:all: \
   --platform win_amd64 --python-version 3.12 --implementation cp --abi cp312 \
   --dest "$AGENT_STAGE/wheelhouse"
@@ -427,12 +424,13 @@ sha256sum "dist/desktop-agent-windows-x86_64-${RELEASE_VERSION}.zip" \
 ```
 
 `windows-agent-constraints.txt` 来自冻结的 `uv.lock`，目标平台解析仍显式指定 Windows
-x64/CPython 3.12。如果构建机上的 `pip download` 无法提供某个 `win_amd64` wheel，应停止打包并更换已审查
+x64/CPython 3.12。下载时使用 `--no-deps`，仅下载前一步已为 Windows 解析完整的依赖清单，
+避免 Linux 构建机重新解析依赖时带入 Linux 专属包。如果构建机上的 `pip download` 无法提供某个 `win_amd64` wheel，应停止打包并更换已审查
 的 Windows 构建环境或企业制品源；不能把 Linux wheel 混入 Windows 包，也不能让执行机
 在首次启动时从公网临时下载依赖。交付前在 Windows 执行机执行：
 
 ```powershell
-(Get-FileHash -LiteralPath .\desktop-agent-windows-x86_64-0.1.0.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash -LiteralPath .\desktop-agent-windows-x86_64-0.3.0.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 并与随包 `.sha256` 文件比较。Windows 安装脚本必须由最终交互用户实际运行一次，不能用
@@ -452,13 +450,13 @@ Compose 文件，因为它定义 migration、API、挂载和启动顺序。根�
 
 ```bash
 cd /srv/job-collection-engine
-sha256sum --check dist/crawler-api-0.1.0.tar.sha256
-docker load --input dist/crawler-api-0.1.0.tar
-docker image inspect job-collection-engine/crawler-api:0.1.0 \
+sha256sum --check dist/crawler-api-0.3.0.tar.sha256
+docker load --input dist/crawler-api-0.3.0.tar
+docker image inspect job-collection-engine/crawler-api:0.3.0 \
   --format 'id={{.Id}} created={{.Created}} tags={{json .RepoTags}}'
 ```
 
-校验失败或镜像标签不是 `job-collection-engine/crawler-api:0.1.0` 时停止。不要临时改为
+校验失败或镜像标签不是 `job-collection-engine/crawler-api:0.3.0` 时停止。不要临时改为
 `latest`，也不要用服务器本地工作树重建一个同名镜像覆盖已验收制品。
 
 ### 7.2 选择数据库模式并准备环境文件
@@ -492,7 +490,7 @@ control() {
 `production.env` 必须包含固定镜像名：
 
 ```dotenv
-CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.1.0
+CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
 TENANT_ALLOWLIST_FILE=/etc/job-collection-engine/tenant-allowlist.yml
 DATABASE_POOL_SIZE=10
 DATABASE_MAX_OVERFLOW=0
@@ -532,7 +530,7 @@ sudo chmod 0600 "$CONTROL_ENV" "$CONTROL_KEYS"
 先独立验证挂载和 YAML schema；`python -c` 内容保持单行，避免缩进错误：
 
 ```bash
-docker run --rm --mount "type=bind,src=${CONTROL_ALLOWLIST},dst=/run/secrets/tenant-allowlist.yml,readonly" job-collection-engine/crawler-api:0.1.0 python -c 'from pathlib import Path; from crawler_api.infrastructure.security.tenant_allowlist import load_tenant_allowlist; p=Path("/run/secrets/tenant-allowlist.yml"); a=load_tenant_allowlist(p); print([t.tenant_id for t in a.tenants])'
+docker run --rm --mount "type=bind,src=${CONTROL_ALLOWLIST},dst=/run/secrets/tenant-allowlist.yml,readonly" job-collection-engine/crawler-api:0.3.0 python -c 'from pathlib import Path; from crawler_api.infrastructure.security.tenant_allowlist import load_tenant_allowlist; p=Path("/run/secrets/tenant-allowlist.yml"); a=load_tenant_allowlist(p); print([t.tenant_id for t in a.tenants])'
 ```
 
 `src=` 为空说明当前 shell 没有定义 `CONTROL_ALLOWLIST`；先重新设置绝对路径，不要继续
@@ -714,7 +712,7 @@ Python 环境可以安装到 `/opt/job-collection-agent/venv`，但最终运行�
 python3.12 -m venv /opt/job-collection-agent/venv
 /opt/job-collection-agent/venv/bin/python -m pip install --no-index \
   --find-links /opt/job-collection-agent/wheelhouse \
-  crawler-contracts==0.1.0 desktop-collection-agent==0.1.0
+  crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
 ```
 
 随后以最终专用桌面账号登录图形会话。凭据、配置预检和托管安装都必须由该账号执行，
@@ -753,8 +751,8 @@ SYSTEM、Windows Service 或计划任务 Session 0 中安装。先把 ZIP 放到
 `C:\JobCollectionAgent\staging`，校验外层制品并解压：
 
 ```powershell
-$Package = 'C:\JobCollectionAgent\staging\desktop-agent-windows-x86_64-0.1.0.zip'
-$ExpectedHash = '2916f9711cbd4498965430a760e4532e2643dbc97fd6bd6388eff439ea312729'
+$Package = 'C:\JobCollectionAgent\staging\desktop-agent-windows-x86_64-0.3.0.zip'
+$ExpectedHash = 'REPLACE_WITH_TRUSTED_RELEASE_SHA256'
 $ActualHash = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash.ToLower()
 if ($ActualHash -ne $ExpectedHash) { throw "Agent package SHA-256 mismatch: $ActualHash" }
 Expand-Archive -LiteralPath $Package -DestinationPath 'C:\JobCollectionAgent\release' -Force
@@ -773,7 +771,7 @@ Write-Output 'Agent package members verified'
 
 ```powershell
 py -3.12 -m venv C:\JobCollectionAgent\release\venv
-C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links C:\JobCollectionAgent\release\wheelhouse crawler-contracts==0.1.0 desktop-collection-agent==0.1.0
+C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links C:\JobCollectionAgent\release\wheelhouse crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
 C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip check
 ```
 
@@ -1236,7 +1234,7 @@ docker compose \
 | `tenant allowlist is missing or invalid` | 先用 7.2 节单行 `docker run ... python -c` 区分挂载、权限和 YAML schema。确认键名为 `tenantId`、`tenantKeyHashes`、`callbackAllowlist`，hash 为 `sha256:` 加 64 位十六进制。 |
 | `python -c` 报 `IndentationError` | 多行命令被 shell 保留了开头空格。使用手册中的单行 `python -c`，不要把排版缩进复制进代码字符串。 |
 | Agent 预检报 `invalid Agent configuration` | 检查每行只有一个 `KEY=value`，行尾没有分号；`SUPPORTED_SOURCES=["zhaopin"]` 是 JSON；Windows 数据目录和 Profile 目录是绝对路径；keyring service/username 与写入凭据时一致。 |
-| PowerShell 报 `IsPathFullyQualified` 不存在 | 使用修复后的 0.1.0 ZIP，外层 SHA-256 必须为本手册记录值；旧 `install.ps1` 不兼容 Windows PowerShell 5.1。 |
+| PowerShell 报 `IsPathFullyQualified` 不存在 | 使用修复后的 0.3.0 ZIP，外层 SHA-256 必须与可信发布渠道提供的本次发布清单一致；旧 `install.ps1` 不兼容 Windows PowerShell 5.1。 |
 | PowerShell 报 `StreamAlreadyRedirected` | 把交互提示符 `>>` 复制成了命令。按 12 节使用单行命令，不复制 `PS C:\>` 或 `>>`。 |
 | `Register-ScheduledTask` 报拒绝访问/`0x80070005` | 在同一个专用 Agent 用户会话中以管理员身份打开 PowerShell，再执行安装命令。不得用另一个管理员账号代跑。 |
 | 计划任务 `LastTaskResult=267009` | 十六进制为 `0x41301`，表示任务仍在运行。结合 `State=Running`、heartbeat 和 API 日志判断，不把该值单独当成失败。 |

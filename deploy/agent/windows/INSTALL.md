@@ -17,7 +17,7 @@ SYSTEM 账号或 Session 0 进程。
 
 ```powershell
 py -3.12 -m venv C:\JobCollectionAgent\release\venv
-C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links .\wheelhouse crawler-contracts==0.2.0 desktop-collection-agent==0.2.0
+C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links .\wheelhouse crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
 ```
 
 安装前用可信发布渠道提供的 SHA-256 校验 ZIP；解压后按 `SHA256SUMS` 校验包内文件。

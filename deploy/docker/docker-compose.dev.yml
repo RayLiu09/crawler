@@ -2,7 +2,7 @@ name: job-collection-engine
 
 services:
   migrate:
-    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.3.0}
     build:
       context: ../..
       dockerfile: services/crawler_api/Dockerfile
@@ -34,7 +34,7 @@ services:
     restart: "no"
 
   crawler-api:
-    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.2.0-full-e2e-fix.6}
+    image: ${CRAWLER_API_IMAGE:-job-collection-engine/crawler-api:0.3.0}
     build:
       context: ../..
       dockerfile: services/crawler_api/Dockerfile
