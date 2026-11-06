@@ -584,6 +584,45 @@ curl --fail-with-body --silent --show-error http://127.0.0.1:8080/health/ready
 `live` 和 `ready` 都应返回 `{"status":"ok"}`。`ready` 会实际检查数据库；503 不能通过
 重启循环掩盖，应先查 migration、连接参数和数据库日志。
 
+如果不使用 Compose，不能只执行 `docker run job-collection-engine/crawler-api:0.3.0`。
+镜像中的启动命令不会自动读取宿主机环境文件，也不会自动挂载 tenant allowlist。必须把
+普通配置和密钥环境文件都通过 `--env-file` 注入，并把白名单以只读 bind mount 挂载到镜像
+约定的路径。生产 Compose 已创建内部网络时，API 容器和 migration 容器都加入同一个网络：
+
+```bash
+API_IMAGE=job-collection-engine/crawler-api:0.3.0
+API_NETWORK=job-collection-engine_crawler-internal
+API_ENV_FILE=/etc/job-collection-engine/production.env
+API_KEYS_FILE=/etc/job-collection-engine/crawler-api.keys.env
+API_ALLOWLIST=/etc/job-collection-engine/tenant-allowlist.yml
+
+docker run --rm \
+  --env-file "$API_ENV_FILE" \
+  --env-file "$API_KEYS_FILE" \
+  --volume "$API_ALLOWLIST:/run/secrets/tenant-allowlist.yml:ro" \
+  --network "$API_NETWORK" \
+  "$API_IMAGE" \
+  alembic upgrade head
+
+docker run -d --name crawler-api \
+  --restart unless-stopped \
+  --env-file "$API_ENV_FILE" \
+  --env-file "$API_KEYS_FILE" \
+  --volume "$API_ALLOWLIST:/run/secrets/tenant-allowlist.yml:ro" \
+  --network "$API_NETWORK" \
+  --publish 8080:8080 \
+  "$API_IMAGE" \
+  python -m crawler_api.main
+```
+
+`API_ENV_FILE` 应包含数据库连接、`TENANT_ALLOWLIST_PATH=/run/secrets/tenant-allowlist.yml`
+和运行参数，`API_KEYS_FILE` 应包含 API token、Agent credential、Agent token 和 callback
+相关密钥。两个文件均只在宿主机保存，权限设为 `0600`，不要写入镜像或命令行参数。
+`API_ALLOWLIST` 必须是宿主机上的绝对路径，并且至少对容器内的 `crawler` 用户可读；生产
+环境建议使用 `root:root` 和 `0644`。`--volume` 的目标路径必须保持为
+`/run/secrets/tenant-allowlist.yml`，否则即使设置了 `TENANT_ALLOWLIST_PATH`，API 仍会因为
+找不到白名单而启动失败。
+
 生产 Compose 可以直接确认时区、数据库版本和 schema：
 
 ```bash
