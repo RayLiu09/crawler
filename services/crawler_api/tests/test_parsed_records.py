@@ -279,7 +279,7 @@ async def ingest(
     )
 
 
-def test_payload_hash_and_batch_duplicate_contract_validation() -> None:
+def test_payload_hash_validation_and_batch_duplicates_are_store_idempotent() -> None:
     parsed_fields = fields("Engineer")
     with pytest.raises(ValidationError, match="payloadHash"):
         ParsedJobRecord(
@@ -293,8 +293,20 @@ def test_payload_hash_and_batch_duplicate_contract_validation() -> None:
             payload_hash="sha256:" + "0" * 64,
         )
     duplicate = parsed_record("Engineer")
-    with pytest.raises(ValidationError, match="duplicate sourceUrl/payloadHash"):
-        batch_request([duplicate, duplicate])
+    request = batch_request([duplicate, duplicate])
+    assert request.records == [duplicate, duplicate]
+
+
+async def test_duplicate_records_in_one_batch_are_deduplicated_by_store() -> None:
+    unit_of_work = FakeUnitOfWork()
+    service = ingestor(unit_of_work)
+    duplicate = parsed_record("Engineer")
+
+    response = await ingest(service, batch_request([duplicate, duplicate]))
+
+    assert response.inserted_count == 1
+    assert response.duplicate_count == 1
+    assert response.accepted_record_ids[0] == response.accepted_record_ids[1]
 
 
 async def test_batch_replay_and_cross_batch_record_deduplication() -> None:

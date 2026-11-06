@@ -36,5 +36,19 @@ def load_city_codes(path: Path | None = None) -> dict[str, str]:
             raise ValueError(f"duplicate Zhaopin city code: {code}")
         used_codes.add(code)
         codes[city] = code
-        codes[f"{city}市"] = code
+        if city.endswith("省"):
+            aliases = (city[:-1],)
+        elif city == "内蒙古自治区":
+            aliases = ("内蒙古",)
+        elif city == "宁夏回族自治区":
+            aliases = ("宁夏",)
+        elif city == "新疆维吾尔自治区":
+            aliases = ("新疆",)
+        else:
+            aliases = (f"{city}市",)
+        for alias in aliases:
+            existing = codes.get(alias)
+            if existing is not None and existing != code:
+                raise ValueError(f"duplicate Zhaopin city name: {alias}")
+            codes[alias] = code
     return codes

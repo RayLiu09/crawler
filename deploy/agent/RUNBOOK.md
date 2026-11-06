@@ -61,8 +61,25 @@ desktop-collection-agent-check-config --config <absolute-agent.env>
 
 智联城市代码默认从 Agent 包内的 `city_codes.json` 加载。后续需要调整时，将完整 JSON 表
 复制到持久目录，在 `agent.env` 中设置 `ZHAOPIN_CITY_CODES_FILE=<绝对路径>`。外部文件
-替换默认表，城市名称不带“市”后缀，代码写为数字字符串。编辑后重新运行配置预检，再重启
+替换默认表，城市名称不带“市”后缀，省份可使用完整名称（例如“云南省”），代码写为数字字符串。编辑后重新运行配置预检，再重启
 Agent；重启前正在运行的进程不会读取新映射。
+
+地区匹配先查原名称，找不到时去掉末尾“市”或“省”再查。例如表中 `"云南": "554"`
+同时支持任务地区“云南”和“云南省”。文件若名为 `cite_codex.json`，必须通过
+`ZHAOPIN_CITY_CODES_FILE` 指向该文件，不能仅将它放在安装目录中。
+
+若日志中的关键词出现“閰掑簵”或地区出现“浜戝崡鐪”，先以 UTF-8 读取日志：
+
+```powershell
+Get-Content -LiteralPath 'C:\JobCollectionAgent\release\data-node-01\logs\desktop-agent.log' -Encoding UTF8 -Tail 50
+```
+
+这些字符串符合 UTF-8 中文被按 GBK 误解码的特征。若 UTF-8 读取后仍为乱码，核对提交
+请求及任务详情中的 `keyword`、`region`；用正确的“酒店营销运营专员”和“云南省”重新
+提交时使用新的 `externalRequestId` 和 `Idempotency-Key`。提交端从文件读取 JSON 时需
+明确使用 UTF-8；PowerShell 发送 JSON 可使用 `-ContentType 'application/json; charset=utf-8'`
+和 `-Body ([System.Text.Encoding]::UTF8.GetBytes($Json))`。不要将乱码名称加入地区表，
+也不要对包含 `?` 或替换字符的参数自动猜测转码。
 
 ## 5. Linux 安装
 

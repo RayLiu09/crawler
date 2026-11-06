@@ -77,7 +77,7 @@
 
 - `payloadHash` 已固定为完整 `ParsedJobFields` 的 SHA-256：camelCase、包含 null、键排序、紧凑 UTF-8 JSON。
 - `POST /v1/agent/tasks/{taskId}/records` 复用活动租约鉴权，并校验记录与 Task 的 source、keyword、region、pageLimit 一致。
-- PostgreSQL 按 `(collection_task_id, source_url, payload_hash)` 去重；重复观测返回既有 record ID。
+- PostgreSQL 按 `(collection_task_id, source_url, payload_hash)` 在存储层幂等去重；Agent 不在单次采集内用重复结果阻断后续页，重复观测返回既有 record ID。
 - `parsed_record_batches` 保存 batch 请求哈希、有序 `acceptedRecordIds` 和新增数量；原样重试返回首次结果，修改内容或跨 Task 复用 batch ID 返回 409。
 - `GET /v1/collection-jobs/{jobId}/records` 已实现 tenant 范围内的 Job 绑定游标，按服务端 `created_at + id` 做 keyset pagination，每页限制 1-200。
 

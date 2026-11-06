@@ -36,6 +36,8 @@ from desktop_agent.config import AgentSettings
 from desktop_agent.source_adapters.base import CollectionControl, SourceAdapter
 from desktop_agent.source_adapters.zhaopin import (
     ZhaopinBrowserConfig,
+    ZhaopinNoResults,
+    ZhaopinPageLoadError,
     ZhaopinSourceAdapter,
 )
 from desktop_agent.source_adapters.zhaopin.city_codes import load_city_codes
@@ -411,6 +413,24 @@ class AgentSupervisor:
             await self._complete_with_outcome(state, "paused")
         except TaskCancelRequested:
             await self._complete_with_outcome(state, "cancelled")
+        except (ZhaopinNoResults, ZhaopinPageLoadError) as error:
+            failure_code = {
+                ZhaopinNoResults: "no_results",
+                ZhaopinPageLoadError: "listing_unavailable",
+            }[type(error)]
+            LOGGER.info(
+                "task source failed task_id=%s attempt_id=%s failure_code=%s",
+                lease.task_id,
+                lease.attempt_id,
+                failure_code,
+            )
+            await self._transport.complete(
+                self._session_token,
+                lease.task_id,
+                CompleteTaskRequest(
+                    **self._reference(state), outcome="failed", failure_code=failure_code
+                ),
+            )
         except BrowserShutdownError:
             LOGGER.exception(
                 "browser shutdown failed task_id=%s attempt_id=%s",

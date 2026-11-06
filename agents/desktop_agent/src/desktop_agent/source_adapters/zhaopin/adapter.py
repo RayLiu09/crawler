@@ -27,6 +27,7 @@ from selenium.common.exceptions import (
 from selenium.webdriver.common.by import By
 
 from desktop_agent.browser import BrowserProcessSupervisor
+from desktop_agent.browser.processes import BrowserProcessHandle
 
 from ..base import CollectionControl
 from .city_codes import load_city_codes
@@ -67,6 +68,10 @@ class UnsupportedZhaopinRegion(ZhaopinAdapterError):
 
 
 class ZhaopinPageLoadError(ZhaopinAdapterError):
+    pass
+
+
+class ZhaopinNoResults(ZhaopinAdapterError):
     pass
 
 
@@ -177,6 +182,20 @@ class ZhaopinListing:
     company_scale_text: str
     company_industry_text: str
     job_tags_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ZhaopinListingPage:
+    """Parsed listings and the number of source cards returned for a page.
+
+    ``listings`` is allowed to be empty even when the source returned cards:
+    parsing can fail for a changed card layout.  Pagination must use
+    ``source_listing_count`` to decide whether the source reached its end;
+    deduplicating parsed listings must never make the current page look empty.
+    """
+
+    listings: list[ZhaopinListing]
+    source_listing_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,7 +365,7 @@ class ZhaopinSourceAdapter:
         self._human_intervention_reporter = human_intervention_reporter
         self._process_supervisor = process_supervisor or BrowserProcessSupervisor()
         self._driver: BrowserDriver | None = None
-        self._process_handle = None
+        self._process_handle: BrowserProcessHandle | None = None
 
     def validate_browser_profile(self) -> None:
         profile_directory = self._config.profile_directory.expanduser()
@@ -384,20 +403,22 @@ class ZhaopinSourceAdapter:
             self._process_handle = self._process_supervisor.track(self._driver)
         driver = self._driver
         processed_count = initial_processed_count
-        seen_urls: set[str] = set()
         try:
             for page in range(start_page, page_limit + 1):
                 control.raise_if_control_requested()
-                listings = self._load_listings(
-                    driver, keyword, region, page, seen_urls, control
-                )
+                listing_page = self._load_listings(driver, keyword, region, page, control)
+                listings = listing_page.listings
                 LOGGER.info(
-                    "zhaopin listing page loaded page=%d region=%r listings=%d",
+                    "zhaopin listing page loaded page=%d region=%r source_listings=%d "
+                    "parsed_listings=%d",
                     page,
                     region,
+                    listing_page.source_listing_count,
                     len(listings),
                 )
-                if not listings:
+                if listing_page.source_listing_count == 0:
+                    if processed_count == 0:
+                        raise ZhaopinNoResults("search returned no job listings")
                     control.checkpoint(page, processed_count)
                     break
 
@@ -423,6 +444,7 @@ class ZhaopinSourceAdapter:
                 region,
                 processed_count,
             )
+            self.close()
 
     def close(self) -> None:
         """Close the shared browser after all queries for this task have run."""
@@ -434,7 +456,7 @@ class ZhaopinSourceAdapter:
     def build_search_url(self, keyword: str, region: str, page: int) -> str:
         normalized_region = region.strip()
         city_code = self._city_codes.get(normalized_region)
-        if city_code is None and normalized_region.endswith("市"):
+        if city_code is None and normalized_region.endswith(("市", "省")):
             city_code = self._city_codes.get(normalized_region[:-1])
         if normalized_region and city_code is None:
             raise UnsupportedZhaopinRegion(f"unsupported Zhaopin region: {region}")
@@ -499,9 +521,8 @@ class ZhaopinSourceAdapter:
         keyword: str,
         region: str,
         page: int,
-        seen_urls: set[str],
         control: CollectionControl,
-    ) -> list[ZhaopinListing]:
+    ) -> ZhaopinListingPage:
         search_url = self.build_search_url(keyword, region, page)
         with suppress(TimeoutException):
             driver.get(search_url)
@@ -513,17 +534,14 @@ class ZhaopinSourceAdapter:
             failure_message="Zhaopin listing page did not expose a list or empty marker",
             page_state=(driver, search_url, control),
         )
+        elements = self._listing_elements(driver)
         listings: list[ZhaopinListing] = []
-        for element in self._listing_elements(driver):
+        for element in elements:
             listing = self._parse_listing(element)
             if listing is None:
                 continue
-            identity = self.extract_source_job_id(listing.source_url) or listing.source_url
-            if identity in seen_urls:
-                continue
-            seen_urls.add(identity)
             listings.append(listing)
-        return listings
+        return ZhaopinListingPage(listings=listings, source_listing_count=len(elements))
 
     def _listing_elements(self, driver: BrowserDriver) -> list[BrowserElement]:
         elements: list[BrowserElement] = []
@@ -531,6 +549,21 @@ class ZhaopinSourceAdapter:
         has_job_list_panel = bool(
             driver.find_elements(By.XPATH, self.JOB_LIST_PANEL_XPATH)
         )
+
+        # A split-panel result exposes both a job card and the anchor nested
+        # inside that card. Treat the card as the source result and use the
+        # link only when the page has no cards. Keeping both representations
+        # would emit the same result twice on one page while still failing to
+        # distinguish that DOM duplication from legitimate repeated results
+        # across pages.
+        if has_job_list_panel:
+            cards = driver.find_elements(By.XPATH, self.JOB_CARD_XPATH)
+            if cards:
+                return list(cards)
+            panel_links = driver.find_elements(By.XPATH, self.JOB_LIST_LINK_XPATH)
+            if panel_links:
+                return list(panel_links)
+
         panel_links = driver.find_elements(By.XPATH, self.JOB_LIST_LINK_XPATH)
         for element in panel_links:
             marker = id(element)

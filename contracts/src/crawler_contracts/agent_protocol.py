@@ -105,15 +105,6 @@ class ParsedRecordBatchRequest(LeaseReference):
     batch_id: UUID
     records: list[ParsedJobRecord] = Field(min_length=1, max_length=200)
 
-    @model_validator(mode="after")
-    def validate_unique_records(self) -> Self:
-        identities = [
-            (str(record.source_url), record.payload_hash) for record in self.records
-        ]
-        if len(identities) != len(set(identities)):
-            raise ValueError("records cannot contain duplicate sourceUrl/payloadHash pairs")
-        return self
-
 
 class CompleteTaskRequest(LeaseReference):
     outcome: Literal["completed", "paused", "cancelled", "failed"]

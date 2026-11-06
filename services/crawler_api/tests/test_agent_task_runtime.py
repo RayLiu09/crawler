@@ -443,6 +443,34 @@ async def test_completion_clears_bindings_and_aggregates_success() -> None:
     assert outbox.next_attempt_at == NOW
 
 
+@pytest.mark.parametrize("failure_code", ["no_results", "listing_unavailable"])
+async def test_source_failure_completion_fails_task_and_releases_profile(
+    failure_code: str,
+) -> None:
+    unit_of_work = FakeUnitOfWork()
+    task = unit_of_work.collection_tasks.task
+    lease = reference(unit_of_work)
+
+    await build_runtime(unit_of_work, MutableClock(NOW)).complete(
+        session_token=SecretStr(SESSION_TOKEN),
+        task_id=task.id,
+        request=CompleteTaskRequest(
+            **lease.model_dump(), outcome="failed", failure_code=failure_code
+        ),
+    )
+
+    assert task.status is CollectionState.FAILED
+    assert task.failure_code == failure_code
+    assert task.leased_agent_id is None
+    assert task.leased_profile_id is None
+    assert task.lease_token_hash is None
+    assert task.lease_expires_at is None
+    assert unit_of_work.agents.agent.current_task_id is None
+    assert unit_of_work.browser_profiles.profile.status == "ready"
+    assert unit_of_work.task_attempts.attempt.outcome is TaskAttemptOutcome.FAILED
+    assert unit_of_work.collection_jobs.job.status is CollectionState.FAILED
+
+
 async def test_pause_completion_requires_matching_control_intent() -> None:
     unit_of_work = FakeUnitOfWork()
     task = unit_of_work.collection_tasks.task

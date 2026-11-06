@@ -12,6 +12,7 @@ from desktop_agent.source_adapters.zhaopin import (
     ZhaopinBrowserConfig,
     ZhaopinLoginRequired,
     ZhaopinLoginTimeout,
+    ZhaopinNoResults,
     ZhaopinSourceAdapter,
     ZhaopinVerificationRequired,
     ZhaopinVerificationTimeout,
@@ -328,6 +329,51 @@ def test_collect_resumes_from_next_page_with_cumulative_count(tmp_path: Path) ->
     assert records == []
     assert driver.visited_urls == [second_page_url]
     assert control.checkpoints == [(2, 28)]
+
+
+def test_collect_continues_after_page_contains_only_an_earlier_listing(
+    tmp_path: Path,
+) -> None:
+    first_page_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    second_page_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python&page=2"
+    third_page_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python&page=3"
+    fourth_page_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python&page=4"
+    repeated_url = "https://jobs.zhaopin.com/jobdetail/REPEATED"
+    later_url = "https://jobs.zhaopin.com/jobdetail/LATER"
+    driver = FakeDriver(
+        {
+            first_page_url: FakeElement(
+                child_lists={ZhaopinSourceAdapter.LIST_ITEM_XPATH: [listing_item(repeated_url)]}
+            ),
+            second_page_url: FakeElement(
+                child_lists={ZhaopinSourceAdapter.LIST_ITEM_XPATH: [listing_item(repeated_url)]}
+            ),
+            third_page_url: FakeElement(
+                child_lists={ZhaopinSourceAdapter.LIST_ITEM_XPATH: [listing_item(later_url)]}
+            ),
+            fourth_page_url: FakeElement(
+                child_lists={ZhaopinSourceAdapter.EMPTY_XPATH: [FakeElement()]}
+            ),
+            ZhaopinSourceAdapter.normalize_job_url(repeated_url): detail_page(),
+            ZhaopinSourceAdapter.normalize_job_url(later_url): detail_page(),
+        }
+    )
+    control = RecordingControl()
+
+    records = list(adapter_with_driver(tmp_path, driver).collect("Python", "上海", 4, control))
+
+    assert [record.source_job_id for record in records] == ["REPEATED", "REPEATED", "LATER"]
+    assert [record.page for record in records] == [1, 2, 3]
+    assert control.checkpoints == [(1, 1), (2, 2), (3, 3), (4, 3)]
+    assert driver.visited_urls == [
+        first_page_url,
+        ZhaopinSourceAdapter.normalize_job_url(repeated_url),
+        second_page_url,
+        ZhaopinSourceAdapter.normalize_job_url(repeated_url),
+        third_page_url,
+        ZhaopinSourceAdapter.normalize_job_url(later_url),
+        fourth_page_url,
+    ]
 
 
 def test_collect_does_not_open_browser_after_last_page_checkpoint(tmp_path: Path) -> None:
@@ -714,11 +760,12 @@ def test_new_search_page_accepts_text_only_empty_marker(tmp_path: Path) -> None:
         }
     )
 
-    records = list(
-        adapter_with_driver(tmp_path, driver).collect("ppcc", "上海", 1, RecordingControl())
-    )
-
-    assert records == []
+    adapter = adapter_with_driver(tmp_path, driver)
+    control = RecordingControl()
+    with pytest.raises(ZhaopinNoResults):
+        list(adapter.collect("ppcc", "上海", 1, control))
+    assert control.checkpoints == []
+    adapter.close()
     assert driver.quit_called is True
 
 
@@ -836,7 +883,7 @@ def test_source_job_id_extraction(url: str, expected: str | None) -> None:
 def test_search_url_uses_only_injected_verified_city_codes(tmp_path: Path) -> None:
     adapter = ZhaopinSourceAdapter(
         ZhaopinBrowserConfig(profile_directory=tmp_path / "profile"),
-        city_codes={"上海": "538", "西安": "854", "西安市": "854"},
+        city_codes={"上海": "538", "西安": "854", "西安市": "854", "云南": "554"},
         driver_factory=lambda _config: FakeDriver({}),
     )
 
@@ -851,6 +898,10 @@ def test_search_url_uses_only_injected_verified_city_codes(tmp_path: Path) -> No
     assert (
         adapter.build_search_url("Java", "上海市", 1)
         == "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Java"
+    )
+    assert (
+        adapter.build_search_url("Java", " 云南省 ", 1)
+        == "https://www.zhaopin.com/jobs?jl=554&pageMode=search&kw=Java"
     )
     assert (
         adapter.build_search_url("Java", "", 1)
@@ -887,6 +938,8 @@ def test_search_url_uses_only_injected_verified_city_codes(tmp_path: Path) -> No
         ("东莞市", "779"),
         ("昆明", "831"),
         ("昆明市", "831"),
+        ("云南", "554"),
+        ("云南省", "554"),
         ("温州", "655"),
         ("温州市", "655"),
         ("常州", "638"),
@@ -930,6 +983,37 @@ def test_external_city_code_file_overrides_bundled_mapping(tmp_path: Path) -> No
     assert "jl=999" in adapter.build_search_url("Python", "无锡市", 1)
     with pytest.raises(UnsupportedZhaopinRegion):
         adapter.build_search_url("Python", "上海", 1)
+
+
+def test_external_province_code_supports_suffixed_region(tmp_path: Path) -> None:
+    config_file = tmp_path / "cite_codex.json"
+    config_file.write_text('{"云南省": "554"}', encoding="utf-8")
+    codes = load_city_codes(config_file)
+    assert codes == {"云南": "554", "云南省": "554"}
+    adapter = ZhaopinSourceAdapter(
+        ZhaopinBrowserConfig(profile_directory=tmp_path / "profile"),
+        city_codes=codes,
+        driver_factory=lambda _config: FakeDriver({}),
+    )
+
+    assert adapter.build_search_url("酒店营销运营专员", "云南省", 1) == (
+        "https://www.zhaopin.com/jobs?jl=554&pageMode=search&kw="
+        "%E9%85%92%E5%BA%97%E8%90%A5%E9%94%80%E8%BF%90%E8%90%A5%E4%B8%93%E5%91%98"
+    )
+    with pytest.raises(UnsupportedZhaopinRegion):
+        adapter.build_search_url("Python", "不存在省", 1)
+
+
+def test_search_url_prefers_exact_province_mapping(tmp_path: Path) -> None:
+    adapter = ZhaopinSourceAdapter(
+        ZhaopinBrowserConfig(profile_directory=tmp_path / "profile"),
+        city_codes={"云南": "554", "云南省": "999"},
+        driver_factory=lambda _config: FakeDriver({}),
+    )
+
+    assert adapter.build_search_url("Python", "云南省", 1) == (
+        "https://www.zhaopin.com/jobs?jl=999&pageMode=search&kw=Python"
+    )
 
 
 @pytest.mark.parametrize(

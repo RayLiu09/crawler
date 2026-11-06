@@ -31,7 +31,11 @@ from desktop_agent.runtime.supervisor import AgentSupervisor, default_adapter_fa
 from desktop_agent.runtime.transport import AgentTransport, HttpAgentTransport
 from desktop_agent.source_adapters.base import CollectionControl
 from desktop_agent.source_adapters.fake import FakeSourceAdapter
-from desktop_agent.source_adapters.zhaopin import ZhaopinSourceAdapter
+from desktop_agent.source_adapters.zhaopin import (
+    ZhaopinNoResults,
+    ZhaopinPageLoadError,
+    ZhaopinSourceAdapter,
+)
 from pydantic import HttpUrl, SecretStr
 
 AGENT_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -230,6 +234,51 @@ async def test_supervisor_runs_fake_adapter_through_control_protocol(tmp_path: P
     assert [request.outcome for request in transport.completed] == ["completed"]
     assert transport.released == []
     assert all(request.agent_id == AGENT_ID for request in transport.uploads)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_type", "failure_code"),
+    [
+        (ZhaopinNoResults, "no_results"),
+        (ZhaopinPageLoadError, "listing_unavailable"),
+    ],
+)
+async def test_supervisor_fails_source_without_requeueing(
+    tmp_path: Path, error_type: type[Exception], failure_code: str
+) -> None:
+    transport = FakeTransport()
+
+    class EmptySearchAdapter(FakeSourceAdapter):
+        def collect(
+            self,
+            _keyword: str,
+            _region: str,
+            _page_limit: int,
+            _control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
+        ) -> Iterable[ParsedJobRecord]:
+            raise error_type("search cannot continue")
+            yield  # pragma: no cover
+
+    supervisor = AgentSupervisor(
+        build_settings(tmp_path),
+        transport=transport,
+        adapter_factory=lambda _source, _profile, _reporter, _process_reporter: (
+            EmptySearchAdapter()
+        ),
+    )
+    await supervisor._issue_session()
+
+    assert await supervisor.run_once() is True
+    assert transport.uploads == []
+    assert transport.checkpoints == []
+    assert [(request.outcome, request.failure_code) for request in transport.completed] == [
+        ("failed", failure_code)
+    ]
+    assert transport.released == []
 
 
 @pytest.mark.asyncio
