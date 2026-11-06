@@ -196,7 +196,7 @@ tenantKey 不得出现在共享 shell history、CI 日志或验收报告中。�
 ```text
 /srv/job-collection-engine/                 release 工作目录
 /etc/job-collection-engine/                 生产配置目录，root:root 0700
-/etc/job-collection-engine/production.env   Compose 插值配置，0600
+/etc/job-collection-engine/crawler-api.runtime.env   Compose 插值配置，0600
 /etc/job-collection-engine/crawler-api.keys.env  控制面密钥，0600
 /etc/job-collection-engine/tenant-allowlist.yml  tenant 白名单，root:root 0644
 /var/backups/job-collection-engine/          数据库备份，受控存储
@@ -238,10 +238,10 @@ chmod 0600 /etc/job-collection-engine/crawler-api.keys.env
 ```bash
 install -m 0600 \
   /srv/job-collection-engine/deploy/examples/crawler-api.production.env.example \
-  /etc/job-collection-engine/production.env
+  /etc/job-collection-engine/crawler-api.runtime.env
 ```
 
-`production.env` 至少补充或确认以下 Compose 参数：
+`crawler-api.runtime.env` 至少补充或确认以下 Compose 参数：
 
 ```dotenv
 CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
@@ -476,7 +476,7 @@ CONTROL_COMPOSE=/srv/job-collection-engine/deploy/docker/docker-compose.prod.yml
 两种模式共用：
 
 ```bash
-CONTROL_ENV=/etc/job-collection-engine/production.env
+CONTROL_ENV=/etc/job-collection-engine/crawler-api.runtime.env
 CONTROL_KEYS=/etc/job-collection-engine/crawler-api.keys.env
 CONTROL_ALLOWLIST=/etc/job-collection-engine/tenant-allowlist.yml
 control() {
@@ -487,7 +487,7 @@ control() {
 
 后续 `control ...` 是当前 shell 的简写；重新登录控制中心服务器后需要重新设置变量和函数。
 
-`production.env` 必须包含固定镜像名：
+`crawler-api.runtime.env` 必须包含固定镜像名：
 
 ```dotenv
 CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
@@ -592,9 +592,12 @@ curl --fail-with-body --silent --show-error http://127.0.0.1:8080/health/ready
 ```bash
 API_IMAGE=job-collection-engine/crawler-api:0.3.0
 API_NETWORK=job-collection-engine_crawler-internal
-API_ENV_FILE=/etc/job-collection-engine/production.env
-API_KEYS_FILE=/etc/job-collection-engine/crawler-api.keys.env
-API_ALLOWLIST=/etc/job-collection-engine/tenant-allowlist.yml
+CRAWLER_API_DIR=/etc/job-collection-engine
+API_ENV_FILE="$CRAWLER_API_DIR/crawler-api.runtime.env"
+API_KEYS_FILE="$CRAWLER_API_DIR/crawler-api.keys.env"
+API_ALLOWLIST="$CRAWLER_API_DIR/tenant-allowlist.yml"
+
+test -r "$API_ENV_FILE" -a -r "$API_KEYS_FILE" -a -r "$API_ALLOWLIST"
 
 docker run --rm \
   --env-file "$API_ENV_FILE" \
