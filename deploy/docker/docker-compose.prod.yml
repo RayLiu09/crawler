@@ -71,7 +71,7 @@ services:
     volumes:
       - ${TENANT_ALLOWLIST_FILE:?TENANT_ALLOWLIST_FILE must reference the production allowlist}:/run/secrets/tenant-allowlist.yml:ro
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
     networks:
       - crawler-internal
     depends_on:

@@ -45,7 +45,7 @@ services:
     volumes:
       - ${TENANT_ALLOWLIST_FILE:-../config/tenant-allowlist.example.yml}:/run/secrets/tenant-allowlist.yml:ro
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -613,7 +613,7 @@ docker run -d --name crawler-api \
   --env-file "$API_KEYS_FILE" \
   --volume "$API_ALLOWLIST:/run/secrets/tenant-allowlist.yml:ro" \
   --network "$API_NETWORK" \
-  --publish 8080:8080 \
+  --publish 0.0.0.0:8080:8080 \
   "$API_IMAGE" \
   python -m crawler_api.main
 ```
