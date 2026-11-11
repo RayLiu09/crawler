@@ -191,7 +191,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Job Collection Engine API",
-        version="0.3.0",
+        version="0.4.0",
         description="Business-neutral control plane for desktop collection agents.",
         lifespan=lifespan,
     )

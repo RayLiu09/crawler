@@ -132,7 +132,7 @@ wheels = [
 
 [[package]]
 name = "crawler-api"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "services/crawler_api" }
 dependencies = [
     { name = "alembic" },
@@ -165,7 +165,7 @@ requires-dist = [
 
 [[package]]
 name = "crawler-contracts"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "contracts" }
 dependencies = [
     { name = "pydantic" },
@@ -215,7 +215,7 @@ wheels = [
 
 [[package]]
 name = "desktop-collection-agent"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "agents/desktop_agent" }
 dependencies = [
     { name = "crawler-contracts" },
@@ -388,7 +388,7 @@ wheels = [
 
 [[package]]
 name = "job-collection-engine-workspace"
-version = "0.3.0"
+version = "0.4.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

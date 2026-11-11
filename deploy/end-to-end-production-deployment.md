@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文用于准备和执行岗位数据采集引擎 0.3.0 的真实端到端验证环境。它覆盖控制中心、
+本文用于准备和执行岗位数据采集引擎 0.4.0 的真实端到端验证环境。它覆盖控制中心、
 PostgreSQL、验收调用方以及至少两台桌面 Agent 执行机的安装、配置、上线、验证、证据
 留存和回滚。
 
@@ -22,10 +22,10 @@ Webhook Dispatcher 可以保持生产默认启用；没有 callback 配置时不
 
 开始安装前按第 6 节构建并校验本次发布制品，保存构建信息和校验清单。制品为：
 
-- `../dist/desktop-agent-windows-x86_64-0.3.0.zip`：Windows x64 / CPython 3.12 Agent
+- `../dist/desktop-agent-windows-x86_64-0.4.0.zip`：Windows x64 / CPython 3.12 Agent
   离线安装包，包含 wheelhouse、Windows 安装脚本和 RUNBOOK；
-- `../dist/crawler-api-0.3.0.tar`：可通过 `docker load` 导入的 crawler-api 镜像包；
-- `../dist/crawler-api-0.3.0.tar.sha256`：镜像包完整性校验文件。
+- `../dist/crawler-api-0.4.0.tar`：可通过 `docker load` 导入的 crawler-api 镜像包；
+- `../dist/crawler-api-0.4.0.tar.sha256`：镜像包完整性校验文件。
 
 制品导入前必须按随包发布的 SHA-256 清单校验；Windows Agent 仍需在真实 Windows x64 主机上
 完成一次干净安装和配置预检，Linux 构建机的 wheel 标签检查不能替代该步骤。
@@ -50,13 +50,13 @@ Webhook Dispatcher 可以保持生产默认启用；没有 callback 配置时不
 
 | 文件 | 用途 |
 |---|---|
-| `dist/crawler-api-0.3.0.tar` | crawler-api、migration 共用的 Docker 镜像包 |
-| `dist/crawler-api-0.3.0.tar.sha256` | API 镜像包校验值 |
-| `dist/desktop-agent-windows-x86_64-0.3.0.zip` | Windows x64 / CPython 3.12 离线 Agent 安装包 |
-| `dist/desktop-agent-windows-x86_64-0.3.0.zip.sha256` | Agent 安装包校验值 |
+| `dist/crawler-api-0.4.0.tar` | crawler-api、migration 共用的 Docker 镜像包 |
+| `dist/crawler-api-0.4.0.tar.sha256` | API 镜像包校验值 |
+| `dist/desktop-agent-windows-x86_64-0.4.0.zip` | Windows x64 / CPython 3.12 离线 Agent 安装包 |
+| `dist/desktop-agent-windows-x86_64-0.4.0.zip.sha256` | Agent 安装包校验值 |
 
 Agent ZIP 的 SHA-256 以本次构建生成的
-`dist/desktop-agent-windows-x86_64-0.3.0.zip.sha256` 为准；通过可信发布渠道取得校验值。
+`dist/desktop-agent-windows-x86_64-0.4.0.zip.sha256` 为准；通过可信发布渠道取得校验值。
 
 ### 部署顺序
 
@@ -244,7 +244,7 @@ install -m 0600 \
 `crawler-api.runtime.env` 至少补充或确认以下 Compose 参数：
 
 ```dotenv
-CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
+CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.4.0
 POSTGRES_IMAGE_TAG=18.1-alpine
 POSTGRES_DATABASE=crawler
 POSTGRES_USERNAME=crawler
@@ -332,7 +332,7 @@ API 和 migration 使用同一个镜像，镜像标签必须包含版本号，�
 
 ```bash
 cd /workspace/refactor
-export RELEASE_VERSION=0.3.0
+export RELEASE_VERSION=0.4.0
 export CRAWLER_API_IMAGE="job-collection-engine/crawler-api:${RELEASE_VERSION}"
 
 docker build --pull \
@@ -358,7 +358,7 @@ Agent 包必须在可解析 Windows x64 / CPython 3.12 wheel 的构建环境中�
 
 ```bash
 cd /workspace/refactor
-export RELEASE_VERSION=0.3.0
+export RELEASE_VERSION=0.4.0
 export AGENT_STAGE="dist/desktop-agent-windows-x86_64-${RELEASE_VERSION}"
 rm -rf "$AGENT_STAGE" "dist/desktop-agent-windows-x86_64-${RELEASE_VERSION}.zip"
 mkdir -p "$AGENT_STAGE/wheelhouse" "$AGENT_STAGE/agent/windows" "$AGENT_STAGE/examples"
@@ -430,7 +430,7 @@ x64/CPython 3.12。下载时使用 `--no-deps`，仅下载前一步已为 Window
 在首次启动时从公网临时下载依赖。交付前在 Windows 执行机执行：
 
 ```powershell
-(Get-FileHash -LiteralPath .\desktop-agent-windows-x86_64-0.3.0.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash -LiteralPath .\desktop-agent-windows-x86_64-0.4.0.zip -Algorithm SHA256).Hash.ToLower()
 ```
 
 并与随包 `.sha256` 文件比较。Windows 安装脚本必须由最终交互用户实际运行一次，不能用
@@ -450,13 +450,13 @@ Compose 文件，因为它定义 migration、API、挂载和启动顺序。根�
 
 ```bash
 cd /srv/job-collection-engine
-sha256sum --check dist/crawler-api-0.3.0.tar.sha256
-docker load --input dist/crawler-api-0.3.0.tar
-docker image inspect job-collection-engine/crawler-api:0.3.0 \
+sha256sum --check dist/crawler-api-0.4.0.tar.sha256
+docker load --input dist/crawler-api-0.4.0.tar
+docker image inspect job-collection-engine/crawler-api:0.4.0 \
   --format 'id={{.Id}} created={{.Created}} tags={{json .RepoTags}}'
 ```
 
-校验失败或镜像标签不是 `job-collection-engine/crawler-api:0.3.0` 时停止。不要临时改为
+校验失败或镜像标签不是 `job-collection-engine/crawler-api:0.4.0` 时停止。不要临时改为
 `latest`，也不要用服务器本地工作树重建一个同名镜像覆盖已验收制品。
 
 ### 7.2 选择数据库模式并准备环境文件
@@ -490,7 +490,7 @@ control() {
 `crawler-api.runtime.env` 必须包含固定镜像名：
 
 ```dotenv
-CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.3.0
+CRAWLER_API_IMAGE=job-collection-engine/crawler-api:0.4.0
 TENANT_ALLOWLIST_FILE=/etc/job-collection-engine/tenant-allowlist.yml
 DATABASE_POOL_SIZE=10
 DATABASE_MAX_OVERFLOW=0
@@ -530,7 +530,7 @@ sudo chmod 0600 "$CONTROL_ENV" "$CONTROL_KEYS"
 先独立验证挂载和 YAML schema；`python -c` 内容保持单行，避免缩进错误：
 
 ```bash
-docker run --rm --mount "type=bind,src=${CONTROL_ALLOWLIST},dst=/run/secrets/tenant-allowlist.yml,readonly" job-collection-engine/crawler-api:0.3.0 python -c 'from pathlib import Path; from crawler_api.infrastructure.security.tenant_allowlist import load_tenant_allowlist; p=Path("/run/secrets/tenant-allowlist.yml"); a=load_tenant_allowlist(p); print([t.tenant_id for t in a.tenants])'
+docker run --rm --mount "type=bind,src=${CONTROL_ALLOWLIST},dst=/run/secrets/tenant-allowlist.yml,readonly" job-collection-engine/crawler-api:0.4.0 python -c 'from pathlib import Path; from crawler_api.infrastructure.security.tenant_allowlist import load_tenant_allowlist; p=Path("/run/secrets/tenant-allowlist.yml"); a=load_tenant_allowlist(p); print([t.tenant_id for t in a.tenants])'
 ```
 
 `src=` 为空说明当前 shell 没有定义 `CONTROL_ALLOWLIST`；先重新设置绝对路径，不要继续
@@ -584,13 +584,13 @@ curl --fail-with-body --silent --show-error http://127.0.0.1:8080/health/ready
 `live` 和 `ready` 都应返回 `{"status":"ok"}`。`ready` 会实际检查数据库；503 不能通过
 重启循环掩盖，应先查 migration、连接参数和数据库日志。
 
-如果不使用 Compose，不能只执行 `docker run job-collection-engine/crawler-api:0.3.0`。
+如果不使用 Compose，不能只执行 `docker run job-collection-engine/crawler-api:0.4.0`。
 镜像中的启动命令不会自动读取宿主机环境文件，也不会自动挂载 tenant allowlist。必须把
 普通配置和密钥环境文件都通过 `--env-file` 注入，并把白名单以只读 bind mount 挂载到镜像
 约定的路径。生产 Compose 已创建内部网络时，API 容器和 migration 容器都加入同一个网络：
 
 ```bash
-API_IMAGE=job-collection-engine/crawler-api:0.3.0
+API_IMAGE=job-collection-engine/crawler-api:0.4.0
 API_NETWORK=job-collection-engine_crawler-internal
 CRAWLER_API_DIR=/etc/job-collection-engine
 API_ENV_FILE="$CRAWLER_API_DIR/crawler-api.runtime.env"
@@ -755,7 +755,7 @@ Python 环境可以安装到 `/opt/job-collection-agent/venv`，但最终运行�
 python3.12 -m venv /opt/job-collection-agent/venv
 /opt/job-collection-agent/venv/bin/python -m pip install --no-index \
   --find-links /opt/job-collection-agent/wheelhouse \
-  crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
+  crawler-contracts==0.4.0 desktop-collection-agent==0.4.0
 ```
 
 若 `agent.env` 选择 `BROWSER_ENGINE=playwright`，`install.sh` 会自动为最终桌面用户安装
@@ -806,7 +806,7 @@ SYSTEM、Windows Service 或计划任务 Session 0 中安装。先把 ZIP 放到
 `C:\JobCollectionAgent\staging`，校验外层制品并解压：
 
 ```powershell
-$Package = 'C:\JobCollectionAgent\staging\desktop-agent-windows-x86_64-0.3.0.zip'
+$Package = 'C:\JobCollectionAgent\staging\desktop-agent-windows-x86_64-0.4.0.zip'
 $ExpectedHash = 'REPLACE_WITH_TRUSTED_RELEASE_SHA256'
 $ActualHash = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash.ToLower()
 if ($ActualHash -ne $ExpectedHash) { throw "Agent package SHA-256 mismatch: $ActualHash" }
@@ -826,7 +826,7 @@ Write-Output 'Agent package members verified'
 
 ```powershell
 py -3.12 -m venv C:\JobCollectionAgent\release\venv
-C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links C:\JobCollectionAgent\release\wheelhouse crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
+C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip install --no-index --find-links C:\JobCollectionAgent\release\wheelhouse crawler-contracts==0.4.0 desktop-collection-agent==0.4.0
 C:\JobCollectionAgent\release\venv\Scripts\python.exe -m pip check
 ```
 
