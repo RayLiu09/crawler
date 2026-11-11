@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 import psutil
 
+from .base import BrowserDriver
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessIdentity:
@@ -29,10 +31,6 @@ class ProcessBackend(Protocol):
     def is_alive(self, identity: ProcessIdentity) -> bool: ...
 
     def terminate_tree(self, tree: OwnedProcessTree, timeout_seconds: float) -> bool: ...
-
-
-class BrowserDriver(Protocol):
-    def quit(self) -> None: ...
 
 
 class BrowserShutdownError(RuntimeError):
@@ -191,6 +189,16 @@ class BrowserProcessHandle:
 
 
 ProcessOwnershipReporter = Callable[[OwnedProcessTree], None]
+ProcessIdProvider = Callable[[BrowserDriver], int]
+
+
+def service_process_id(driver: BrowserDriver) -> int:
+    """Default provider: resolve the WebDriver service process (Selenium)."""
+
+    service: Any = getattr(driver, "service", None)
+    process: Any = getattr(service, "process", None)
+    pid = getattr(process, "pid", 0)
+    return pid if isinstance(pid, int) and pid > 0 else 0
 
 
 class BrowserProcessSupervisor:
@@ -200,15 +208,17 @@ class BrowserProcessSupervisor:
         shutdown_timeout_seconds: float = 10,
         backend: ProcessBackend | None = None,
         ownership_reporter: ProcessOwnershipReporter | None = None,
+        pid_provider: ProcessIdProvider | None = None,
     ) -> None:
         if shutdown_timeout_seconds <= 0:
             raise ValueError("shutdown_timeout_seconds must be positive")
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._backend = backend or PsutilProcessBackend()
         self._ownership_reporter = ownership_reporter
+        self._pid_provider = pid_provider or service_process_id
 
     def track(self, driver: BrowserDriver) -> BrowserProcessHandle:
-        root_pid = self._driver_process_id(driver)
+        root_pid = self._pid_provider(driver)
         process_tree = self._backend.snapshot_tree(root_pid) if root_pid else None
         handle = BrowserProcessHandle(
             driver,
@@ -223,10 +233,3 @@ class BrowserProcessSupervisor:
                 handle.close()
                 raise
         return handle
-
-    @staticmethod
-    def _driver_process_id(driver: BrowserDriver) -> int:
-        service: Any = getattr(driver, "service", None)
-        process: Any = getattr(service, "process", None)
-        pid = getattr(process, "pid", 0)
-        return pid if isinstance(pid, int) and pid > 0 else 0

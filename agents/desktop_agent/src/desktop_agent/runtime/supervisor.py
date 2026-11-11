@@ -32,9 +32,11 @@ from desktop_agent.browser import (
     BrowserShutdownError,
     OwnedProcessTree,
 )
+from desktop_agent.browser.processes import ProcessIdProvider, service_process_id
 from desktop_agent.config import AgentSettings
 from desktop_agent.source_adapters.base import CollectionControl, SourceAdapter
 from desktop_agent.source_adapters.zhaopin import (
+    BrowserDriverFactory,
     ZhaopinBrowserConfig,
     ZhaopinNoResults,
     ZhaopinPageLoadError,
@@ -148,6 +150,7 @@ def default_adapter_factory(
     reporter: Callable[[str, str], None],
     process_reporter: Callable[[OwnedProcessTree], None],
     *,
+    browser_engine: Literal["selenium", "playwright"] = "selenium",
     browser_name: Literal["auto", "chrome", "edge"] = "chrome",
     browser_shutdown_timeout_seconds: float = 10,
     zhaopin_max_page_limit: int = 100,
@@ -155,6 +158,21 @@ def default_adapter_factory(
 ) -> SourceAdapter:
     if source is not SourceCode.ZHAOPIN:
         raise ValueError(f"no desktop adapter registered for source {source.value}")
+    driver_factory: BrowserDriverFactory
+    pid_provider: ProcessIdProvider
+    if browser_engine == "playwright":
+        from desktop_agent.browser.playwright import (
+            create_playwright_browser,
+            playwright_process_id,
+        )
+
+        driver_factory = create_playwright_browser
+        pid_provider = playwright_process_id
+    else:
+        from desktop_agent.browser.selenium import create_selenium_browser
+
+        driver_factory = create_selenium_browser
+        pid_provider = service_process_id
     return ZhaopinSourceAdapter(
         ZhaopinBrowserConfig(
             profile_directory=profile_directory,
@@ -162,11 +180,13 @@ def default_adapter_factory(
             headless=False,
             max_page_limit=zhaopin_max_page_limit,
         ),
+        driver_factory=driver_factory,
         city_codes=load_city_codes(zhaopin_city_codes_file),
         human_intervention_reporter=reporter,
         process_supervisor=BrowserProcessSupervisor(
             shutdown_timeout_seconds=browser_shutdown_timeout_seconds,
             ownership_reporter=process_reporter,
+            pid_provider=pid_provider,
         ),
     )
 
@@ -214,6 +234,7 @@ class AgentSupervisor:
                     profile,
                     reporter,
                     process_reporter,
+                    browser_engine=settings.browser_engine,
                     browser_name=settings.browser_name,
                     browser_shutdown_timeout_seconds=(
                         settings.browser_shutdown_timeout_seconds

@@ -1,14 +1,13 @@
 import hashlib
 import logging
 import re
-import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal
 from urllib.parse import unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 from crawler_contracts.common import SourceCode
@@ -18,16 +17,12 @@ from crawler_contracts.parsed_jobs import (
     calculate_payload_hash,
 )
 from pydantic import HttpUrl
-from selenium import webdriver
-from selenium.common.exceptions import (
-    NoSuchDriverException,
-    TimeoutException,
-    WebDriverException,
-)
-from selenium.webdriver.common.by import By
 
 from desktop_agent.browser import BrowserProcessSupervisor
+from desktop_agent.browser.base import BrowserDriver, BrowserElement, By
+from desktop_agent.browser.errors import BrowserError, BrowserTimeoutError
 from desktop_agent.browser.processes import BrowserProcessHandle
+from desktop_agent.browser.selenium import create_selenium_browser
 
 from ..base import CollectionControl
 from .city_codes import load_city_codes
@@ -89,40 +84,6 @@ class ZhaopinLoginTimeout(ZhaopinAdapterError):
 
 class ZhaopinVerificationTimeout(ZhaopinAdapterError):
     """Manual security verification did not complete within the configured window."""
-
-
-class BrowserElement(Protocol):
-    @property
-    def text(self) -> str: ...
-
-    def find_element(self, by: str, value: str) -> "BrowserElement": ...
-
-    def find_elements(self, by: str, value: str) -> Sequence["BrowserElement"]: ...
-
-    def get_attribute(self, name: str) -> str | None: ...
-
-    def click(self) -> None: ...
-
-
-class BrowserDriver(BrowserElement, Protocol):
-    @property
-    def current_url(self) -> str: ...
-
-    @property
-    def title(self) -> str: ...
-
-    @property
-    def page_source(self) -> str: ...
-
-    def get(self, url: str) -> None: ...
-
-    def execute_script(self, script: str, *args: object) -> object: ...
-
-    def implicitly_wait(self, time_to_wait: float) -> None: ...
-
-    def set_page_load_timeout(self, time_to_wait: float) -> None: ...
-
-    def quit(self) -> None: ...
 
 
 BrowserName = Literal["auto", "chrome", "edge"]
@@ -216,49 +177,6 @@ class ZhaopinDetail:
     company_industry_text: str = ""
 
 
-def _browser_candidates(browser_name: BrowserName) -> tuple[Literal["chrome", "edge"], ...]:
-    if browser_name == "auto":
-        return ("chrome", "edge") if sys.platform == "win32" else ("chrome",)
-    return (browser_name,)
-
-
-def _configure_options(
-    options: webdriver.ChromeOptions | webdriver.EdgeOptions,
-    config: ZhaopinBrowserConfig,
-) -> None:
-    options.add_argument(f"--user-data-dir={config.profile_directory.expanduser().resolve()}")
-    options.add_argument("--window-size=1440,1000")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.page_load_strategy = "eager"
-    if config.headless:
-        options.add_argument("--headless=new")
-
-
-def create_zhaopin_webdriver(config: ZhaopinBrowserConfig) -> BrowserDriver:
-    last_error: NoSuchDriverException | None = None
-    for browser_name in _browser_candidates(config.browser_name):
-        try:
-            if browser_name == "edge":
-                edge_options = webdriver.EdgeOptions()
-                _configure_options(edge_options, config)
-                edge_driver = webdriver.Edge(options=edge_options)
-                edge_driver.implicitly_wait(0.2)
-                edge_driver.set_page_load_timeout(config.page_load_timeout_seconds)
-                return cast(BrowserDriver, edge_driver)
-            chrome_options = webdriver.ChromeOptions()
-            _configure_options(chrome_options, config)
-            chrome_driver = webdriver.Chrome(options=chrome_options)
-            chrome_driver.implicitly_wait(0.2)
-            chrome_driver.set_page_load_timeout(config.page_load_timeout_seconds)
-            return cast(BrowserDriver, chrome_driver)
-        except NoSuchDriverException as error:
-            last_error = error
-    raise ZhaopinAdapterError("no configured Chrome or Edge WebDriver is available") from last_error
-
-
 class ZhaopinSourceAdapter:
     source: SourceCode = SourceCode.ZHAOPIN
 
@@ -342,7 +260,7 @@ class ZhaopinSourceAdapter:
         self,
         config: ZhaopinBrowserConfig,
         *,
-        driver_factory: BrowserDriverFactory = create_zhaopin_webdriver,
+        driver_factory: BrowserDriverFactory = create_selenium_browser,
         city_codes: Mapping[str, str] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleeper: Callable[[float], None] = time.sleep,
@@ -524,7 +442,7 @@ class ZhaopinSourceAdapter:
         control: CollectionControl,
     ) -> ZhaopinListingPage:
         search_url = self.build_search_url(keyword, region, page)
-        with suppress(TimeoutException):
+        with suppress(BrowserTimeoutError):
             driver.get(search_url)
 
         self._ensure_page_ready(driver, control=control, return_url=search_url)
@@ -655,7 +573,7 @@ class ZhaopinSourceAdapter:
             if panel is None:
                 return ZhaopinDetail()
             return self._parse_split_detail(panel)
-        except (WebDriverException, ZhaopinPageLoadError):
+        except (BrowserError, ZhaopinPageLoadError):
             return ZhaopinDetail()
 
     def _load_legacy_detail(
@@ -665,7 +583,7 @@ class ZhaopinSourceAdapter:
         control: CollectionControl,
     ) -> ZhaopinDetail:
         try:
-            with suppress(TimeoutException):
+            with suppress(BrowserTimeoutError):
                 driver.get(source_url)
             self._ensure_page_ready(driver, control=control, return_url=source_url)
             self._wait_until(
@@ -674,7 +592,7 @@ class ZhaopinSourceAdapter:
                 failure_message="Zhaopin detail page did not expose a title",
                 page_state=(driver, source_url, control),
             )
-        except (WebDriverException, ZhaopinPageLoadError):
+        except (BrowserError, ZhaopinPageLoadError):
             return ZhaopinDetail()
 
         return self._parse_detail(driver)
@@ -978,7 +896,7 @@ class ZhaopinSourceAdapter:
                 return value
         try:
             return next((line.strip() for line in container.text.splitlines() if line.strip()), "")
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     def _parse_listing(self, element: BrowserElement) -> ZhaopinListing | None:
@@ -1224,7 +1142,7 @@ class ZhaopinSourceAdapter:
                 else self._is_security_verification(driver)
             ):
                 if kind == "login" and driver.current_url != return_url:
-                    with suppress(TimeoutException):
+                    with suppress(BrowserTimeoutError):
                         driver.get(return_url)
                     self._wait_until(
                         lambda: not self._is_login_required(driver),
@@ -1260,7 +1178,7 @@ class ZhaopinSourceAdapter:
             return True
         try:
             return bool(driver.find_elements(By.XPATH, cls.LOGIN_PROMPT_XPATH))
-        except WebDriverException:
+        except BrowserError:
             return False
 
     @staticmethod
@@ -1282,28 +1200,28 @@ class ZhaopinSourceAdapter:
     def _driver_url(driver: BrowserDriver) -> str:
         try:
             return driver.current_url
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod
     def _driver_title(driver: BrowserDriver) -> str:
         try:
             return driver.title
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod
     def _driver_page_source(driver: BrowserDriver) -> str:
         try:
             return driver.page_source
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod
     def _safe_text(container: BrowserElement, xpath: str) -> str:
         try:
             return container.find_element(By.XPATH, xpath).text.strip()
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod
@@ -1328,14 +1246,14 @@ class ZhaopinSourceAdapter:
     def _safe_attribute(container: BrowserElement, xpath: str, name: str) -> str:
         try:
             return (container.find_element(By.XPATH, xpath).get_attribute(name) or "").strip()
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod
     def _safe_direct_attribute(element: BrowserElement, name: str) -> str:
         try:
             return (element.get_attribute(name) or "").strip()
-        except WebDriverException:
+        except BrowserError:
             return ""
 
     @staticmethod

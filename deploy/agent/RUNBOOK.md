@@ -14,7 +14,9 @@
 ## 2. 前置条件
 
 1. Python 3.12 环境中安装已经锁定版本的 `desktop-collection-agent`。
-2. 安装可见 Chrome 或 Edge，并使用专用桌面账号完成一次人工启动检查。
+2. 默认 Selenium 引擎需要可见 Chrome 或 Edge，并使用专用桌面账号完成一次人工启动检查；
+   若改用 Playwright 引擎，Linux 使用随包安装的 Chromium（见 5.1），Windows 复用系统
+   Chrome/Edge。
 3. 控制中心通过 `provision-agent` 为本机预置唯一身份，一次性交付 deviceSecret。
 4. 当前账号的系统凭据库可用：
    - Windows 使用 Credential Manager keyring backend；
@@ -83,6 +85,37 @@ Get-Content -LiteralPath 'C:\JobCollectionAgent\release\data-node-01\logs\deskto
 
 ## 5. Linux 安装
 
+### 5.1 浏览器引擎选择
+
+`agent.env` 的 `BROWSER_ENGINE` 决定浏览器自动化引擎：
+
+- `selenium`（默认）：使用系统安装的 Chrome/Edge，由 Selenium Manager 解析 driver。
+- `playwright`：Linux 使用 Playwright 自带 Chromium；Windows 按 `BROWSER_NAME` 复用
+  系统 Chrome（`chrome`）或 Edge（`edge`）。Profile 目录两者等价，仍由
+  `BROWSER_PROFILE_ROOT` 与 `BROWSER_PROFILE_KEY` 管理。
+
+当 `BROWSER_ENGINE=playwright` 时，`install.sh` 会在安装前调用同目录 venv 的 Playwright
+CLI 执行 `playwright install chromium`，浏览器落在当前桌面用户缓存
+（`~/.cache/ms-playwright`）。下载源默认使用国内镜像，可用环境变量覆盖：
+
+```text
+PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+  bash deploy/agent/linux/install.sh --executable ... --config ...
+```
+
+最小化 Linux 发行版缺少 Chromium 系统依赖时，由管理员先执行一次（不要用 root 运行
+Agent 或 `install.sh`）：
+
+```text
+sudo /opt/job-collection-agent/venv/bin/playwright install-deps chromium
+```
+
+切换引擎属于版本级变更：先协作停止 Agent，备份 `agent.env`、SQLite spool 和 Profile，
+修改 `BROWSER_ENGINE`，重新执行配置预检和 `install.sh`，再启动并确认一次受控任务。
+不要同时更换 Profile 目录与引擎。
+
+### 5.2 执行安装
+
 在已经登录图形桌面的专用用户终端中执行，不能使用 root：
 
 ```text
@@ -143,6 +176,10 @@ powershell -File deploy\agent\windows\uninstall.ps1
 任务。脚本等待最多 180 秒，只有协作停止超时才强制停止计划任务。卸载同样保留配置、
 spool 和 Profile，需在确认恢复和吊销后单独处置。
 
+Windows 使用 `BROWSER_ENGINE=playwright` 时不下载额外 Chromium：`BROWSER_NAME=chrome`
+使用系统 Chrome 的 `chrome` channel，`edge` 使用 `msedge`，`auto` 先尝试 `chrome` 再回退
+`msedge`。系统仍需安装对应的可见浏览器。切换引擎前先停止 Agent 并备份 Profile。
+
 ## 7. 设备凭证轮换
 
 1. 在控制中心执行受控 `rotate-agent-credential`，旧 Session 会被吊销。
@@ -174,3 +211,8 @@ spool 和 Profile，需在确认恢复和吊销后单独处置。
   Profile 锁。
 - Linux systemd 超时：`KillMode=mixed` 会清理 unit cgroup；仍需检查 Profile 锁并保留
   故障证据。
+- `no Playwright Chromium or Edge browser is available`：Playwright 找不到可用浏览器。
+  Linux 重新执行 `install.sh`（或 venv 的 `playwright install chromium`）；Windows 确认
+  `BROWSER_NAME` 对应的 Chrome/Edge 已安装。
+- `Executable doesn't exist at .../ms-playwright/...`：Playwright 版本升级后浏览器构建
+  不匹配，重新运行 `playwright install chromium`；不要手工复用旧缓存目录。

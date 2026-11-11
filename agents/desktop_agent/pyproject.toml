@@ -10,6 +10,7 @@ dependencies = [
   "crawler-contracts",
   "httpx>=0.28,<1",
   "keyring>=25,<26",
+  "playwright>=1.49,<2",
   "psutil>=7,<8",
   "pydantic-settings>=2.8,<3",
   "secretstorage>=3.3,<4; sys_platform == 'linux'",

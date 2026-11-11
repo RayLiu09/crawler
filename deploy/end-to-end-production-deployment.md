@@ -727,6 +727,7 @@ AGENT_DATA_DIR=REPLACE_WITH_ABSOLUTE_NODE_LOCAL_DATA_PATH
 BROWSER_PROFILE_ROOT=REPLACE_WITH_ABSOLUTE_NODE_LOCAL_PROFILE_PATH
 AGENT_HEARTBEAT_SECONDS=20
 TASK_LEASE_RENEW_SECONDS=30
+BROWSER_ENGINE=selenium
 BROWSER_NAME=chrome
 BROWSER_PROFILE_KEY=zhaopin-primary
 SUPPORTED_SOURCES=["zhaopin"]
@@ -756,6 +757,18 @@ python3.12 -m venv /opt/job-collection-agent/venv
   --find-links /opt/job-collection-agent/wheelhouse \
   crawler-contracts==0.3.0 desktop-collection-agent==0.3.0
 ```
+
+若 `agent.env` 选择 `BROWSER_ENGINE=playwright`，`install.sh` 会自动为最终桌面用户安装
+Playwright 自带 Chromium（默认使用国内下载镜像）。也可提前手动预热；最小化发行版需由
+管理员补装系统依赖：
+
+```bash
+PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright \
+  /opt/job-collection-agent/venv/bin/playwright install chromium
+sudo /opt/job-collection-agent/venv/bin/playwright install-deps chromium
+```
+
+下载缓存位于最终运行用户的 `~/.cache/ms-playwright`，不要用 root 安装后复制给其他用户。
 
 随后以最终专用桌面账号登录图形会话。凭据、配置预检和托管安装都必须由该账号执行，
 不得使用 root：
@@ -866,9 +879,15 @@ Invoke-RestMethod -Uri 'http://10.100.11.51:8080/health/live' -Method Get
 Invoke-RestMethod -Uri 'http://10.100.11.51:8080/health/ready' -Method Get
 ```
 
-当前代码通过 Selenium Manager 发现 Chrome/Edge driver。生产网络不允许下载时，必须由
-最终 Agent 用户预热 Selenium 缓存，或通过企业软件分发安装与浏览器匹配且可发现的
-driver。没有可用 driver 时不能降级为 FakeDriver。
+`BROWSER_ENGINE=selenium`（默认）通过 Selenium Manager 发现 Chrome/Edge driver。生产
+网络不允许下载时，必须由最终 Agent 用户预热 Selenium 缓存，或通过企业软件分发安装与
+浏览器匹配且可发现的 driver。
+
+`BROWSER_ENGINE=playwright` 时 Windows 不下载额外 Chromium：`BROWSER_NAME=chrome` 复用
+系统 Chrome（channel `chrome`），`edge` 使用 `msedge`，`auto` 先尝试 `chrome` 再回退
+`msedge`。系统仍需安装对应的可见浏览器。
+
+两种引擎在找不到浏览器或 driver 时都返回稳定错误，不能降级为 FakeDriver。
 
 正常启停只能使用配套脚本：
 

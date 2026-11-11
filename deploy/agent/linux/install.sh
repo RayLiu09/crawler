@@ -41,6 +41,32 @@ if ! grep -Eqi '^[[:space:]]*AGENT_DEVICE_SECRET_KEYRING_SERVICE[[:space:]]*=' "
   exit 1
 fi
 
+browser_engine="$(sed -nE \
+  's/^[[:space:]]*BROWSER_ENGINE[[:space:]]*=[[:space:]]*([A-Za-z]+).*/\1/p' \
+  "$source_config_path" | tail -n 1 | tr '[:upper:]' '[:lower:]')"
+case "$browser_engine" in
+  ""|selenium)
+    ;;
+  playwright)
+    executable_directory="$(dirname -- "$executable_path")"
+    playwright_download_host="${PLAYWRIGHT_DOWNLOAD_HOST:-https://cdn.npmmirror.com/binaries/playwright}"
+    if [[ -x "$executable_directory/playwright" ]]; then
+      PLAYWRIGHT_DOWNLOAD_HOST="$playwright_download_host" \
+        "$executable_directory/playwright" install chromium
+    elif [[ -x "$executable_directory/python" ]]; then
+      PLAYWRIGHT_DOWNLOAD_HOST="$playwright_download_host" \
+        "$executable_directory/python" -m playwright install chromium
+    else
+      echo "BROWSER_ENGINE=playwright requires the venv Playwright CLI next to $executable_path" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "BROWSER_ENGINE must be selenium or playwright" >&2
+    exit 1
+    ;;
+esac
+
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 config_root="${XDG_CONFIG_HOME:-$HOME/.config}/job-collection-agent"
 systemd_root="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from crawler_contracts.common import SourceCode
 from crawler_contracts.parsed_jobs import calculate_payload_hash
+from desktop_agent.browser.errors import BrowserError
 from desktop_agent.source_adapters import SourceAdapter
 from desktop_agent.source_adapters.zhaopin import (
     BrowserProfileInvalid,
@@ -18,7 +19,6 @@ from desktop_agent.source_adapters.zhaopin import (
     ZhaopinVerificationTimeout,
 )
 from desktop_agent.source_adapters.zhaopin.city_codes import load_city_codes
-from selenium.common.exceptions import NoSuchElementException
 
 COLLECTED_AT = datetime(2026, 9, 18, 11, 0, tzinfo=UTC)
 
@@ -51,7 +51,7 @@ class FakeElement:
         try:
             return self._children[value]
         except KeyError as error:
-            raise NoSuchElementException(value) from error
+            raise BrowserError(value) from error
 
     def find_elements(self, _by: str, value: str) -> Sequence["FakeElement"]:
         return self._child_lists.get(value, ())

@@ -1,6 +1,9 @@
 """Zhaopin source adapter package."""
 
+from desktop_agent.browser.selenium import create_selenium_browser
+
 from .adapter import (
+    BrowserDriverFactory,
     BrowserProfileInvalid,
     UnsupportedZhaopinRegion,
     ZhaopinAdapterError,
@@ -12,10 +15,10 @@ from .adapter import (
     ZhaopinSourceAdapter,
     ZhaopinVerificationRequired,
     ZhaopinVerificationTimeout,
-    create_zhaopin_webdriver,
 )
 
 __all__ = [
+    "BrowserDriverFactory",
     "BrowserProfileInvalid",
     "UnsupportedZhaopinRegion",
     "ZhaopinAdapterError",
@@ -27,5 +30,5 @@ __all__ = [
     "ZhaopinSourceAdapter",
     "ZhaopinVerificationRequired",
     "ZhaopinVerificationTimeout",
-    "create_zhaopin_webdriver",
+    "create_selenium_browser",
 ]

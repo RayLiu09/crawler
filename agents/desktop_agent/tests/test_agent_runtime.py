@@ -62,6 +62,45 @@ def test_default_adapter_factory_uses_external_city_code_file(tmp_path: Path) ->
     assert "jl=641" in adapter.build_search_url("Python", "南通市", 1)
 
 
+def test_default_adapter_factory_wires_selenium_engine(tmp_path: Path) -> None:
+    from desktop_agent.browser.processes import service_process_id
+    from desktop_agent.browser.selenium import create_selenium_browser
+
+    adapter = default_adapter_factory(
+        SourceCode.ZHAOPIN,
+        tmp_path / "profile",
+        lambda _kind, _url: None,
+        lambda _tree: None,
+    )
+
+    assert isinstance(adapter, ZhaopinSourceAdapter)
+    assert adapter._driver_factory is create_selenium_browser
+    assert adapter._process_supervisor._pid_provider is service_process_id
+
+
+def test_default_adapter_factory_wires_playwright_engine(tmp_path: Path) -> None:
+    from desktop_agent.browser.playwright import (
+        create_playwright_browser,
+        playwright_process_id,
+    )
+
+    adapter = default_adapter_factory(
+        SourceCode.ZHAOPIN,
+        tmp_path / "profile",
+        lambda _kind, _url: None,
+        lambda _tree: None,
+        browser_engine="playwright",
+    )
+
+    assert isinstance(adapter, ZhaopinSourceAdapter)
+    assert adapter._driver_factory is create_playwright_browser
+    assert adapter._process_supervisor._pid_provider is playwright_process_id
+
+
+def test_settings_default_to_selenium_engine(tmp_path: Path) -> None:
+    assert build_settings(tmp_path).browser_engine == "selenium"
+
+
 class FakeTransport(AgentTransport):
     def __init__(self) -> None:
         self.heartbeat_requests: list[AgentHeartbeatRequest] = []

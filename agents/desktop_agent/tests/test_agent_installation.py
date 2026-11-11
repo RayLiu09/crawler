@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -171,6 +172,113 @@ def test_linux_managed_service_templates_have_required_safety_controls() -> None
     assert "AGENT_DEVICE_SECRET=" not in service
     subprocess.run(("bash", "-n", str(installer)), check=True)
     subprocess.run(("bash", "-n", str(deploy_root / "linux" / "uninstall.sh")), check=True)
+
+
+def build_linux_installer_fixture(
+    tmp_path: Path,
+    *,
+    engine_line: str | None,
+) -> tuple[Path, Path, dict[str, str], Path, Path]:
+    deploy_root = Path(__file__).parents[3] / "deploy" / "agent"
+    installer = deploy_root / "linux" / "install.sh"
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "desktop-collection-agent"
+    executable.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    playwright_log = tmp_path / "playwright.log"
+    playwright = bin_dir / "playwright"
+    playwright.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$PLAYWRIGHT_DOWNLOAD_HOST" "$*" >> "{playwright_log}"\n',
+        encoding="utf-8",
+    )
+    playwright.chmod(0o755)
+
+    systemctl_log = tmp_path / "systemctl.log"
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{systemctl_log}"\n',
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+
+    config_lines = [
+        "CRAWLER_API_URL=https://crawler-api.test",
+        "AGENT_ID=00000000-0000-4000-8000-000000000001",
+        "AGENT_DEVICE_SECRET_KEYRING_SERVICE=job-collection-agent",
+        "AGENT_DEVICE_SECRET_KEYRING_USERNAME=00000000-0000-4000-8000-000000000001",
+        f"AGENT_DATA_DIR={tmp_path / 'agent-data'}",
+        f"BROWSER_PROFILE_ROOT={tmp_path / 'browser-profiles'}",
+    ]
+    if engine_line is not None:
+        config_lines.append(engine_line)
+    config = tmp_path / "agent.env"
+    config.write_text("\n".join(config_lines), encoding="utf-8")
+
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    }
+    return installer, executable, env, config, playwright_log
+
+
+@pytest.mark.parametrize(
+    ("engine_line", "expects_browser"),
+    [
+        ("BROWSER_ENGINE=playwright", True),
+        ("BROWSER_ENGINE=selenium", False),
+        (None, False),
+    ],
+)
+def test_linux_installer_installs_playwright_browser_only_when_selected(
+    tmp_path: Path,
+    engine_line: str | None,
+    expects_browser: bool,
+) -> None:
+    installer, executable, env, config, playwright_log = build_linux_installer_fixture(
+        tmp_path,
+        engine_line=engine_line,
+    )
+
+    subprocess.run(
+        ("bash", str(installer), "--executable", str(executable), "--config", str(config)),
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    if expects_browser:
+        assert playwright_log.read_text(encoding="utf-8").splitlines() == [
+            "https://cdn.npmmirror.com/binaries/playwright",
+            "install chromium",
+        ]
+    else:
+        assert not playwright_log.exists()
+
+
+def test_linux_installer_rejects_unknown_browser_engine(tmp_path: Path) -> None:
+    installer, executable, env, config, _log = build_linux_installer_fixture(
+        tmp_path,
+        engine_line="BROWSER_ENGINE=firefox",
+    )
+
+    result = subprocess.run(
+        ("bash", str(installer), "--executable", str(executable), "--config", str(config)),
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "BROWSER_ENGINE must be selenium or playwright" in result.stderr
 
 
 def test_windows_task_is_interactive_and_has_cooperative_stop() -> None:

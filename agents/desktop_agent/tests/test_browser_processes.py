@@ -84,6 +84,30 @@ def test_browser_supervisor_reports_ownership_and_accepts_clean_exit() -> None:
     assert backend.terminated == []
 
 
+def test_browser_supervisor_uses_injected_pid_provider() -> None:
+    backend = FakeProcessBackend()
+    calls: list[object] = []
+
+    class ServiceLessDriver:
+        def quit(self) -> None:
+            pass
+
+    driver = ServiceLessDriver()
+
+    def pid_provider(candidate: object) -> int:
+        calls.append(candidate)
+        return ROOT.pid
+
+    handle = BrowserProcessSupervisor(
+        backend=backend,
+        pid_provider=pid_provider,
+    ).track(driver)
+    handle.close()
+
+    assert calls == [driver]
+    assert backend.terminated == [TREE]
+
+
 def test_browser_supervisor_falls_back_to_exact_owned_tree_after_quit_error() -> None:
     backend = FakeProcessBackend()
 
