@@ -31,6 +31,7 @@ class AgentSettings(BaseSettings):
     browser_profile_root: Path
     agent_heartbeat_seconds: int = Field(default=20, ge=5, le=300)
     task_lease_renew_seconds: int = Field(default=30, ge=5, le=300)
+    collection_progress_timeout_seconds: float = Field(default=600, gt=0, le=86400)
     browser_engine: Literal["selenium", "playwright"] = "selenium"
     browser_name: Literal["auto", "chrome", "edge"] = "chrome"
     browser_profile_key: str = Field(

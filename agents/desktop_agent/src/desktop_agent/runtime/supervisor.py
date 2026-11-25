@@ -50,6 +50,8 @@ from .transport import AgentTransport, AgentTransportError
 
 LOGGER = logging.getLogger(__name__)
 
+_COLLECTOR_JOIN_TIMEOUT_SECONDS = 0.5
+
 
 class TaskPauseRequested(RuntimeError):
     pass
@@ -59,6 +61,14 @@ class TaskCancelRequested(RuntimeError):
     pass
 
 
+class CollectionStalledError(RuntimeError):
+    """The adapter stopped yielding records without reporting completion."""
+
+
+class _CollectorStopped(Exception):
+    """Signals the collector thread that the consumer has stopped draining."""
+
+
 class RuntimeControl(CollectionControl):
     def __init__(self, events: "queue.Queue[RuntimeEvent]") -> None:
         self._events = events
@@ -66,6 +76,7 @@ class RuntimeControl(CollectionControl):
         self._lock = threading.Lock()
         self._pending_checkpoints: list[threading.Event] = []
         self._checkpoint_error: BaseException | None = None
+        self._stopped = threading.Event()
 
     def request(self, desired_state: Literal["running", "paused", "cancelled"]) -> None:
         with self._lock:
@@ -86,14 +97,36 @@ class RuntimeControl(CollectionControl):
         self.raise_if_control_requested()
         acknowledgement = threading.Event()
         with self._lock:
+            if self._stopped.is_set():
+                raise TaskCancelRequested
             self._pending_checkpoints.append(acknowledgement)
-        self._events.put(CheckpointEvent(page, processed_count, acknowledgement))
+        try:
+            while True:
+                try:
+                    self._events.put(
+                        CheckpointEvent(page, processed_count, acknowledgement),
+                        timeout=0.2,
+                    )
+                    break
+                except queue.Full:
+                    if self._stopped.is_set():
+                        raise TaskCancelRequested from None
+        except BaseException:
+            with self._lock:
+                if acknowledgement in self._pending_checkpoints:
+                    self._pending_checkpoints.remove(acknowledgement)
+            raise
         acknowledgement.wait()
         with self._lock:
             error = self._checkpoint_error
             self._checkpoint_error = None
         if error is not None:
             raise error
+
+    def abort(self) -> None:
+        """Stop accepting checkpoints and release any checkpoint the adapter awaits."""
+        self._stopped.set()
+        self.fail_pending(RuntimeError("collection stopped"))
 
     def fail_pending(self, error: BaseException) -> None:
         with self._lock:
@@ -527,6 +560,20 @@ class AgentSupervisor:
             state.lease.page_limit,
         )
 
+        stop_collector = threading.Event()
+
+        def emit(event: RuntimeEvent) -> None:
+            # Bound every queue write so a producer that outlives the consumer
+            # cannot wedge forever on a full queue; the consumer stops draining
+            # as soon as it finishes or fails.
+            while not stop_collector.is_set():
+                try:
+                    events.put(event, timeout=0.2)
+                    return
+                except queue.Full:
+                    continue
+            raise _CollectorStopped
+
         def produce() -> None:
             try:
                 for record in adapter.collect(
@@ -537,58 +584,82 @@ class AgentSupervisor:
                     start_page=state.lease.page_checkpoint + 1,
                     initial_processed_count=state.lease.processed_count,
                 ):
-                    events.put(RecordEvent(record))
-                events.put(FinishedEvent())
+                    emit(RecordEvent(record))
+                emit(FinishedEvent())
+            except _CollectorStopped:
+                return
             except BaseException as error:
-                events.put(ErrorEvent(error))
+                try:
+                    emit(ErrorEvent(error))
+                except _CollectorStopped:
+                    return
 
         thread = threading.Thread(target=produce, name="adapter-collector", daemon=True)
         thread.start()
         pending: list[ParsedJobRecord] = []
-        while True:
-            try:
-                event = events.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-            if isinstance(event, RecordEvent):
-                pending.append(event.record)
-                LOGGER.debug(
-                    "record parsed task_id=%s page=%d source_job_id=%s source_url=%s",
-                    state.lease.task_id,
-                    event.record.page,
-                    event.record.source_job_id,
-                    event.record.source_url,
-                )
-                if len(pending) >= self._settings.spool_batch_size:
-                    await self._flush_records(state, pending)
-                    pending.clear()
-            elif isinstance(event, CheckpointEvent):
-                if pending:
-                    await self._flush_records(state, pending)
-                    pending.clear()
-                await self._checkpoint(
-                    state, control, event.page, event.processed_count
-                )
-                self._spool.save_checkpoint(
-                    task_id=state.lease.task_id,
-                    page=event.page,
-                    processed_count=event.processed_count,
-                )
-                control.acknowledge_checkpoint(event.acknowledgement)
-                LOGGER.info(
-                    "task checkpoint acknowledged task_id=%s page=%d processed_count=%d",
-                    state.lease.task_id,
-                    event.page,
-                    event.processed_count,
-                )
-            elif isinstance(event, FinishedEvent):
-                if pending:
-                    await self._flush_records(state, pending)
-                return
-            else:
-                control.fail_pending(event.error)
-                raise event.error
+        progress_timeout = self._settings.collection_progress_timeout_seconds
+        last_progress = time.monotonic()
+        try:
+            while True:
+                try:
+                    event = events.get_nowait()
+                except queue.Empty:
+                    # A wedged browser command never yields an event; fail the
+                    # task instead of letting the renewing lease keep it alive
+                    # forever. Human intervention is tracked separately, so it
+                    # must not count against the progress budget.
+                    if (
+                        self._profile_status != "login_required"
+                        and time.monotonic() - last_progress > progress_timeout
+                    ):
+                        raise CollectionStalledError(
+                            f"adapter produced no progress for {progress_timeout:g}s"
+                        ) from None
+                    await asyncio.sleep(0.01)
+                    continue
+                last_progress = time.monotonic()
+                if isinstance(event, RecordEvent):
+                    pending.append(event.record)
+                    LOGGER.debug(
+                        "record parsed task_id=%s page=%d source_job_id=%s source_url=%s",
+                        state.lease.task_id,
+                        event.record.page,
+                        event.record.source_job_id,
+                        event.record.source_url,
+                    )
+                    if len(pending) >= self._settings.spool_batch_size:
+                        await self._flush_records(state, pending)
+                        pending.clear()
+                elif isinstance(event, CheckpointEvent):
+                    if pending:
+                        await self._flush_records(state, pending)
+                        pending.clear()
+                    await self._checkpoint(
+                        state, control, event.page, event.processed_count
+                    )
+                    self._spool.save_checkpoint(
+                        task_id=state.lease.task_id,
+                        page=event.page,
+                        processed_count=event.processed_count,
+                    )
+                    control.acknowledge_checkpoint(event.acknowledgement)
+                    LOGGER.info(
+                        "task checkpoint acknowledged task_id=%s page=%d processed_count=%d",
+                        state.lease.task_id,
+                        event.page,
+                        event.processed_count,
+                    )
+                elif isinstance(event, FinishedEvent):
+                    if pending:
+                        await self._flush_records(state, pending)
+                    return
+                else:
+                    control.fail_pending(event.error)
+                    raise event.error
+        finally:
+            stop_collector.set()
+            control.abort()
+            await asyncio.to_thread(thread.join, _COLLECTOR_JOIN_TIMEOUT_SECONDS)
 
     async def _flush_records(self, state: LeaseState, records: list[ParsedJobRecord]) -> None:
         if self._session_token is None:

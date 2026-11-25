@@ -1,4 +1,5 @@
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -278,6 +279,32 @@ def test_worker_surfaces_runtime_start_failure() -> None:
         _PlaywrightWorker(runtime_factory=lambda: FailingLauncher())
 
 
+def test_worker_command_timeout_raises_browser_timeout() -> None:
+    launcher = _FakeLauncher()
+    worker = _PlaywrightWorker(
+        runtime_factory=lambda: launcher,
+        command_timeout_seconds=0.05,
+    )
+    try:
+        with pytest.raises(BrowserTimeoutError, match="timed out"):
+            worker.submit(lambda: time.sleep(0.3))
+    finally:
+        worker.stop()
+
+
+def test_worker_startup_timeout_reports_unavailable() -> None:
+    class SlowLauncher:
+        def start(self) -> _FakeRuntime:
+            time.sleep(0.3)
+            return _FakeRuntime()
+
+    with pytest.raises(BrowserDriverUnavailableError):
+        _PlaywrightWorker(
+            runtime_factory=lambda: SlowLauncher(),
+            startup_timeout_seconds=0.05,
+        )
+
+
 class _FakeChromium:
     def __init__(self, context: FakeContext, error: Exception | None = None) -> None:
         self.context = context
@@ -318,7 +345,7 @@ def test_create_playwright_browser_launches_persistent_context(monkeypatch) -> N
     chromium = _FakeChromium(context)
     workers: list[_FakePlaywrightWorker] = []
 
-    def make_worker() -> _FakePlaywrightWorker:
+    def make_worker(**_kwargs: object) -> _FakePlaywrightWorker:
         worker = _FakePlaywrightWorker()
         worker._runtime = _FakePlaywrightRuntime(chromium)
         workers.append(worker)
@@ -350,7 +377,7 @@ def test_create_playwright_browser_reports_missing_browser(monkeypatch) -> None:
     chromium = _FakeChromium(FakeContext(), error=PlaywrightError("missing executable"))
     workers: list[_FakePlaywrightWorker] = []
 
-    def make_worker() -> _FakePlaywrightWorker:
+    def make_worker(**_kwargs: object) -> _FakePlaywrightWorker:
         worker = _FakePlaywrightWorker()
         worker._runtime = _FakePlaywrightRuntime(chromium)
         workers.append(worker)

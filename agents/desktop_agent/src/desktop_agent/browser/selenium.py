@@ -30,6 +30,20 @@ def _browser_candidates(browser_name: str) -> tuple[str, ...]:
     return (browser_name,)
 
 
+def _set_command_timeout(driver: WebDriver, timeout_seconds: float) -> None:
+    """Bound every chromedriver HTTP command.
+
+    Selenium's client defaults to no request timeout, so a wedged browser would
+    otherwise block a command (and the collector thread) indefinitely. The
+    timeout is read per request, so setting it after the driver launches is
+    enough and must exceed the server-side page-load timeout.
+    """
+
+    client_config = getattr(driver.command_executor, "_client_config", None)
+    if client_config is not None:
+        client_config.timeout = timeout_seconds
+
+
 def _configure_options(
     options: webdriver.ChromeOptions | webdriver.EdgeOptions,
     config: BrowserLaunchOptions,
@@ -187,18 +201,21 @@ class SeleniumDriver:
 
 def create_selenium_browser(config: BrowserLaunchOptions) -> BrowserDriver:
     last_error: NoSuchDriverException | None = None
+    command_timeout = max(60.0, config.page_load_timeout_seconds * 2)
     for browser_name in _browser_candidates(config.browser_name):
         try:
             if browser_name == "edge":
                 edge_options = webdriver.EdgeOptions()
                 _configure_options(edge_options, config)
                 edge_driver = webdriver.Edge(options=edge_options)
+                _set_command_timeout(edge_driver, command_timeout)
                 edge_driver.implicitly_wait(0.2)
                 edge_driver.set_page_load_timeout(config.page_load_timeout_seconds)
                 return SeleniumDriver(edge_driver)
             chrome_options = webdriver.ChromeOptions()
             _configure_options(chrome_options, config)
             chrome_driver = webdriver.Chrome(options=chrome_options)
+            _set_command_timeout(chrome_driver, command_timeout)
             chrome_driver.implicitly_wait(0.2)
             chrome_driver.set_page_load_timeout(config.page_load_timeout_seconds)
             return SeleniumDriver(chrome_driver)

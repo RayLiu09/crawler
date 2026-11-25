@@ -1,4 +1,21 @@
-from desktop_agent.browser.selenium import SeleniumDriver, SeleniumElement
+from types import SimpleNamespace
+
+from desktop_agent.browser.selenium import (
+    SeleniumDriver,
+    SeleniumElement,
+    _set_command_timeout,
+)
+
+
+def test_set_command_timeout_bounds_driver_requests() -> None:
+    client_config = SimpleNamespace(timeout=None)
+    driver = SimpleNamespace(
+        command_executor=SimpleNamespace(_client_config=client_config)
+    )
+
+    _set_command_timeout(driver, 45.0)  # type: ignore[arg-type]
+
+    assert client_config.timeout == 45.0
 
 
 class NullTextElement:

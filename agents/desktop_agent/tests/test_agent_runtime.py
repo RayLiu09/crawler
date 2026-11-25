@@ -28,7 +28,11 @@ from desktop_agent.config import AgentSettings
 from desktop_agent.runtime.profile_lock import ProfileLock, ProfileLockBusy
 from desktop_agent.runtime.spool import LocalSpool
 from desktop_agent.runtime.supervisor import AgentSupervisor, default_adapter_factory
-from desktop_agent.runtime.transport import AgentTransport, HttpAgentTransport
+from desktop_agent.runtime.transport import (
+    AgentTransport,
+    AgentTransportError,
+    HttpAgentTransport,
+)
 from desktop_agent.source_adapters.base import CollectionControl
 from desktop_agent.source_adapters.fake import FakeSourceAdapter
 from desktop_agent.source_adapters.zhaopin import (
@@ -513,6 +517,90 @@ async def test_supervisor_keeps_profile_locked_when_browser_shutdown_is_unproven
     ]
     assert supervisor._profile_status == "unavailable"
     assert len(list((settings.agent_data_dir / "profile-locks").glob("*.lock"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_fails_task_that_stops_reporting_progress(
+    tmp_path: Path,
+) -> None:
+    transport = FakeTransport()
+    quiet = threading.Event()
+
+    class SilentAdapter:
+        source = SourceCode.ZHAOPIN
+
+        def validate_browser_profile(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def collect(
+            self,
+            _keyword: str,
+            _region: str,
+            _page_limit: int,
+            _control: CollectionControl,
+            *,
+            start_page: int = 1,
+            initial_processed_count: int = 0,
+        ) -> Iterable[ParsedJobRecord]:
+            while not quiet.is_set():
+                time.sleep(0.005)
+            return
+            yield  # pragma: no cover
+
+    settings = build_settings(tmp_path).model_copy(
+        update={"collection_progress_timeout_seconds": 0.05}
+    )
+    supervisor = AgentSupervisor(
+        settings,
+        transport=transport,
+        adapter_factory=lambda _s, _p, _r, _pr: SilentAdapter(),
+        sleeper=lambda _seconds: asyncio.sleep(0.001),
+    )
+    await supervisor._issue_session()
+    try:
+        assert await supervisor.run_once() is True
+    finally:
+        quiet.set()
+
+    assert [request.failure_code for request in transport.released] == [
+        "agent_runtime_error"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_unblocks_collector_after_upload_failure(
+    tmp_path: Path,
+) -> None:
+    class FailingUploadTransport(FakeTransport):
+        async def upload_records(
+            self,
+            session_token: SecretStr,
+            task_id: UUID,
+            request: ParsedRecordBatchRequest,
+        ) -> ParsedRecordBatchResponse:
+            raise AgentTransportError("upload_records")
+
+    transport = FailingUploadTransport()
+    supervisor = AgentSupervisor(
+        build_settings(tmp_path),
+        transport=transport,
+        adapter_factory=lambda _s, _p, _r, _pr: FakeSourceAdapter(
+            records_per_page=500, clock=lambda: BASE_TIME
+        ),
+        sleeper=lambda _seconds: asyncio.sleep(0.001),
+    )
+    await supervisor._issue_session()
+
+    started = time.monotonic()
+    assert await supervisor.run_once() is True
+
+    assert time.monotonic() - started < 5
+    assert [request.failure_code for request in transport.released] == [
+        "agent_runtime_error"
+    ]
 
 
 @pytest.mark.asyncio

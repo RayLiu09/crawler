@@ -111,8 +111,11 @@ class _PlaywrightWorker:
         self,
         *,
         runtime_factory: Callable[[], _RuntimeLauncher] = sync_playwright,
+        command_timeout_seconds: float | None = None,
+        startup_timeout_seconds: float | None = None,
     ) -> None:
         self._runtime_factory = runtime_factory
+        self._command_timeout = command_timeout_seconds
         self._queue: queue.Queue[tuple[Callable[[], object], Future[object]] | None] = queue.Queue()
         self._startup: Future[Playwright] = Future()
         self._stopped = threading.Event()
@@ -122,7 +125,13 @@ class _PlaywrightWorker:
             daemon=True,
         )
         self._thread.start()
-        self._runtime = self._startup.result()
+        try:
+            self._runtime = self._startup.result(timeout=startup_timeout_seconds)
+        except TimeoutError:
+            self.stop()
+            raise BrowserDriverUnavailableError(
+                "Playwright runtime did not start in time"
+            ) from None
 
     @property
     def runtime(self) -> Playwright:
@@ -133,7 +142,10 @@ class _PlaywrightWorker:
             raise BrowserError("Playwright runtime is no longer available")
         future: Future[object] = Future()
         self._queue.put((job, future))
-        return cast(_T, future.result())
+        try:
+            return cast(_T, future.result(timeout=self._command_timeout))
+        except TimeoutError as error:
+            raise BrowserTimeoutError("browser command timed out") from error
 
     def stop(self) -> None:
         if self._stopped.is_set():
@@ -364,9 +376,13 @@ def _launch_persistent_context(
 def create_playwright_browser(config: BrowserLaunchOptions) -> BrowserDriver:
     profile_directory = config.profile_directory.expanduser().resolve()
     user_data_dir = str(profile_directory)
+    command_timeout = max(60.0, config.page_load_timeout_seconds * 2)
     last_error: Exception | None = None
     for channel in _channel_candidates(config.browser_name):
-        worker = _PlaywrightWorker()
+        worker = _PlaywrightWorker(
+            command_timeout_seconds=command_timeout,
+            startup_timeout_seconds=60.0,
+        )
         runtime = worker.runtime
         try:
             context = worker.submit(
