@@ -9,19 +9,21 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from typing import Any, cast
 
 from selenium import webdriver
-from selenium.common.exceptions import (
-    NoSuchDriverException,
-    TimeoutException,
-    WebDriverException,
-)
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
 from .base import BrowserDriver, BrowserLaunchOptions, By
 from .errors import BrowserDriverUnavailableError, BrowserError, BrowserTimeoutError
+
+# Implicit waits apply to every find_element/find_elements miss, and the Zhaopin
+# adapter probes several optional XPaths per field. A 200ms wait per miss adds up
+# across cards, so keep it just high enough to absorb async rendering.
+_IMPLICIT_WAIT_SECONDS = 0.05
 
 
 def _browser_candidates(browser_name: str) -> tuple[str, ...]:
@@ -200,27 +202,31 @@ class SeleniumDriver:
 
 
 def create_selenium_browser(config: BrowserLaunchOptions) -> BrowserDriver:
-    last_error: NoSuchDriverException | None = None
+    # Any launch failure (missing driver, locked profile, version mismatch, no
+    # display) surfaces as a WebDriverException subclass, so translate them all
+    # into the structured "unavailable" error instead of leaking the raw type.
+    last_error: WebDriverException | None = None
     command_timeout = max(60.0, config.page_load_timeout_seconds * 2)
     for browser_name in _browser_candidates(config.browser_name):
+        driver: WebDriver | None = None
         try:
             if browser_name == "edge":
                 edge_options = webdriver.EdgeOptions()
                 _configure_options(edge_options, config)
-                edge_driver = webdriver.Edge(options=edge_options)
-                _set_command_timeout(edge_driver, command_timeout)
-                edge_driver.implicitly_wait(0.2)
-                edge_driver.set_page_load_timeout(config.page_load_timeout_seconds)
-                return SeleniumDriver(edge_driver)
-            chrome_options = webdriver.ChromeOptions()
-            _configure_options(chrome_options, config)
-            chrome_driver = webdriver.Chrome(options=chrome_options)
-            _set_command_timeout(chrome_driver, command_timeout)
-            chrome_driver.implicitly_wait(0.2)
-            chrome_driver.set_page_load_timeout(config.page_load_timeout_seconds)
-            return SeleniumDriver(chrome_driver)
-        except NoSuchDriverException as error:
+                driver = webdriver.Edge(options=edge_options)
+            else:
+                chrome_options = webdriver.ChromeOptions()
+                _configure_options(chrome_options, config)
+                driver = webdriver.Chrome(options=chrome_options)
+            _set_command_timeout(driver, command_timeout)
+            driver.implicitly_wait(_IMPLICIT_WAIT_SECONDS)
+            driver.set_page_load_timeout(config.page_load_timeout_seconds)
+            return SeleniumDriver(driver)
+        except WebDriverException as error:
             last_error = error
+            if driver is not None:
+                with suppress(Exception):
+                    driver.quit()
     raise BrowserDriverUnavailableError(
-        "no configured Chrome or Edge WebDriver is available"
+        "no configured Chrome or Edge WebDriver could be started"
     ) from last_error

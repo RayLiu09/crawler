@@ -520,6 +520,31 @@ async def test_supervisor_keeps_profile_locked_when_browser_shutdown_is_unproven
 
 
 @pytest.mark.asyncio
+async def test_supervisor_resets_profile_status_after_profile_busy(
+    tmp_path: Path,
+) -> None:
+    transport = FakeTransport()
+    settings = build_settings(tmp_path)
+    # Another local Agent owns this Profile: the same-pid marker is never treated
+    # as stale, so the supervisor's acquire fails with ProfileLockBusy.
+    holder = ProfileLock(
+        settings.agent_data_dir / "profile-locks",
+        source="zhaopin",
+        profile_key=settings.browser_profile_key,
+    )
+    holder.acquire()
+    supervisor = AgentSupervisor(settings, transport=transport)
+    try:
+        await supervisor._issue_session()
+        assert await supervisor.run_once() is True
+    finally:
+        holder.release()
+
+    assert [request.failure_code for request in transport.released] == ["profile_busy"]
+    assert supervisor._profile_status == "ready"
+
+
+@pytest.mark.asyncio
 async def test_supervisor_fails_task_that_stops_reporting_progress(
     tmp_path: Path,
 ) -> None:

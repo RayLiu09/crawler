@@ -301,6 +301,10 @@ class ZhaopinSourceAdapter:
         " | //a[normalize-space(.)='登录/注册']"
         " | //button[normalize-space(.)='登录/注册']"
     )
+    # Reading the full page_source is expensive and _ensure_page_ready polls it
+    # about five times per second. Reuse the previous DOM scan for this long (or
+    # until the URL changes) so steady-state readiness costs one read per second.
+    SECURITY_SOURCE_CHECK_INTERVAL_SECONDS = 1.0
 
     def __init__(
         self,
@@ -330,6 +334,8 @@ class ZhaopinSourceAdapter:
         self._process_supervisor = process_supervisor or BrowserProcessSupervisor()
         self._driver: BrowserDriver | None = None
         self._process_handle: BrowserProcessHandle | None = None
+        # (url, observed_at, detected) for the last page_source captcha scan.
+        self._verification_cache: tuple[str, float, bool] | None = None
 
     def validate_browser_profile(self) -> None:
         profile_directory = self._config.profile_directory.expanduser()
@@ -365,6 +371,7 @@ class ZhaopinSourceAdapter:
         if self._driver is None:
             self._driver = self._driver_factory(self._config)
             self._process_handle = self._process_supervisor.track(self._driver)
+            self._verification_cache = None
         driver = self._driver
         processed_count = initial_processed_count
         try:
@@ -1454,20 +1461,36 @@ class ZhaopinSourceAdapter:
         except BrowserError:
             return False
 
-    @staticmethod
-    def _is_security_verification(driver: BrowserDriver) -> bool:
-        title = ZhaopinSourceAdapter._driver_title(driver).lower()
-        source = ZhaopinSourceAdapter._driver_page_source(driver)
+    def _is_security_verification(self, driver: BrowserDriver) -> bool:
+        # The title check is cheap; only fall back to scanning the full DOM when
+        # it does not match. A "clean" scan is reused for the same URL until the
+        # interval elapses to avoid re-reading the whole page_source on every
+        # readiness poll. Positive scans are never cached so the human-wait loop
+        # notices the moment the challenge is resolved.
+        if "security verification" in self._driver_title(driver).lower():
+            return True
+        current_url = self._driver_url(driver)
+        now = time.monotonic()
+        cache = self._verification_cache
+        if (
+            cache is not None
+            and cache[0] == current_url
+            and not cache[2]
+            and now - cache[1] < self.SECURITY_SOURCE_CHECK_INTERVAL_SECONDS
+        ):
+            return False
+        source = self._driver_page_source(driver)
         source_lower = source.lower()
-        return (
-            "security verification" in title
-            or "teocaptchawidget" in source_lower
+        detected = (
+            "teocaptchawidget" in source_lower
             or "tencenteocaptchawidget" in source_lower
             or "captcha.eo.gtimg.com" in source_lower
             or "traceguard" in source_lower
             or "正在验证连接安全性" in source
             or "请勾选下方复选框" in source
         )
+        self._verification_cache = (current_url, now, detected)
+        return detected
 
     @staticmethod
     def _driver_url(driver: BrowserDriver) -> str:

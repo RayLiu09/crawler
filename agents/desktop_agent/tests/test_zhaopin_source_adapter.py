@@ -1,6 +1,7 @@
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from crawler_contracts.common import SourceCode
@@ -1385,6 +1386,19 @@ def verification_page(*, title: str = "", source: str = "") -> FakeElement:
     return FakeElement(title=title, page_source=source)
 
 
+class CountingPage(FakeElement):
+    """A page that records how many times its full DOM is read."""
+
+    def __init__(self, *, title: str = "", page_source: str = "") -> None:
+        super().__init__(title=title, page_source=page_source)
+        self.source_reads = 0
+
+    @property
+    def page_source(self) -> str:
+        self.source_reads += 1
+        return super().page_source
+
+
 def test_login_url_detection_covers_passport_and_login_paths(tmp_path: Path) -> None:
     adapter = adapter_with_driver(tmp_path, FakeDriver({}))
     driver = FakeDriver({})
@@ -1561,6 +1575,79 @@ def test_security_verification_timeout_is_stable(tmp_path: Path) -> None:
         )
 
     assert driver.quit_called is True
+
+
+def test_security_verification_reuses_clean_scan_within_url(tmp_path: Path) -> None:
+    page = CountingPage(page_source="<html>ok</html>")
+    driver = FakeDriver({})
+    driver.replace_current_page(page, url="https://www.zhaopin.com/sou/jl538")
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert adapter._is_security_verification(driver) is False
+    assert adapter._is_security_verification(driver) is False
+    assert page.source_reads == 1
+
+
+def test_security_verification_title_match_skips_page_source(tmp_path: Path) -> None:
+    page = CountingPage(title="Security Verification", page_source="<html></html>")
+    driver = FakeDriver({})
+    driver.replace_current_page(page, url="https://www.zhaopin.com/sou/jl538")
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert adapter._is_security_verification(driver) is True
+    assert page.source_reads == 0
+
+
+def test_security_verification_rescans_while_challenge_present(
+    tmp_path: Path,
+) -> None:
+    page = CountingPage(page_source="<div>TEOCaptchaWidget</div>")
+    driver = FakeDriver({})
+    driver.replace_current_page(page, url="https://www.zhaopin.com/sou/jl538")
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert adapter._is_security_verification(driver) is True
+    assert adapter._is_security_verification(driver) is True
+    assert page.source_reads == 2
+
+
+def test_security_verification_rescans_after_url_change(tmp_path: Path) -> None:
+    clean = CountingPage(page_source="<html>ok</html>")
+    driver = FakeDriver({})
+    driver.replace_current_page(clean, url="https://www.zhaopin.com/sou/jl538")
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert adapter._is_security_verification(driver) is False
+    assert clean.source_reads == 1
+
+    challenge = CountingPage(page_source="<div>TEOCaptchaWidget</div>")
+    driver.replace_current_page(challenge, url="https://www.zhaopin.com/verify")
+    assert adapter._is_security_verification(driver) is True
+    assert challenge.source_reads == 1
+
+
+def test_security_verification_rescans_after_interval(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import desktop_agent.source_adapters.zhaopin.adapter as adapter_module
+
+    clock = [0.0]
+    monkeypatch.setattr(
+        adapter_module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    page = CountingPage(page_source="<html>ok</html>")
+    driver = FakeDriver({})
+    driver.replace_current_page(page, url="https://www.zhaopin.com/sou/jl538")
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    assert adapter._is_security_verification(driver) is False
+    clock[0] = 0.5
+    assert adapter._is_security_verification(driver) is False
+    assert page.source_reads == 1
+
+    clock[0] = 1.5
+    assert adapter._is_security_verification(driver) is False
+    assert page.source_reads == 2
 
 
 def test_human_intervention_poll_interval_cannot_exceed_timeout(tmp_path: Path) -> None:

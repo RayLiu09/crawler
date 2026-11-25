@@ -418,7 +418,10 @@ class AgentSupervisor:
         try:
             await self._acquire_profile_lock(lock)
         except ProfileLockBusy:
-            self._profile_status = "unavailable"
+            # Another process holds the profile lock; this is transient, so mark
+            # busy rather than unavailable. run_once's finally returns it to
+            # "ready" so the status does not linger as unavailable.
+            self._profile_status = "busy"
             await self._transport.release(
                 self._session_token,
                 lease.task_id,
@@ -522,7 +525,11 @@ class AgentSupervisor:
                             lease.task_id,
                             lease.attempt_id,
                         )
+                        # The browser may still hold the profile; keep the lock
+                        # so unavailable is truthful and no second browser can
+                        # start on the same profile until the agent restarts.
                         self._profile_status = "unavailable"
+                        release_profile_lock = False
             if release_profile_lock:
                 lock.release()
             self._spool.clear_task(lease.task_id)
