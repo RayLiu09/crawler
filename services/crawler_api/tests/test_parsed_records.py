@@ -1,4 +1,7 @@
-from datetime import UTC, datetime, timedelta
+import hashlib
+import json
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -18,6 +21,7 @@ from crawler_api.application.parsed_records import (
     RecordCursor,
     decode_record_cursor,
     encode_record_cursor,
+    record_response,
 )
 from crawler_api.application.task_leases import AuthenticatedTaskLease
 from crawler_api.domain.entities import (
@@ -333,6 +337,45 @@ async def test_batch_replay_and_cross_batch_record_deduplication() -> None:
     assert second.duplicate_count == 1
     assert second.accepted_record_ids[0] == first.accepted_record_ids[0]
     assert len(unit_of_work.parsed_job_records.records) == 3
+
+
+async def test_04_batch_receipt_can_be_replayed_after_upgrade() -> None:
+    fixture = Path(__file__).parents[3] / "tests/contract/fixtures/parsed-job-0.4.0.json"
+    original = json.loads(fixture.read_text())
+    original.update(keyword=TASK.keyword, region=TASK.region)
+    canonical = json.dumps(
+        [original], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    old_request_hash = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    unit_of_work = FakeUnitOfWork()
+    record_id = uuid4()
+    unit_of_work.parsed_record_batches.receipts[BATCH_ID] = ParsedRecordBatchReceipt(
+        id=BATCH_ID, collection_task_id=TASK.id, attempt_id=ATTEMPT_ID,
+        request_hash=old_request_hash, record_ids=[record_id], inserted_count=1, created_at=NOW,
+    )
+    response = await ingest(
+        ingestor(unit_of_work), batch_request([ParsedJobRecord.model_validate(original)])
+    )
+    assert response.accepted_record_ids == [record_id]
+    assert unit_of_work.parsed_job_records.records == []
+
+
+async def test_new_job_facts_survive_ingest_storage_and_response() -> None:
+    record = parsed_record("Sales")
+    enriched = record.fields.model_copy(update={
+        "location_text": "湛江·霞山区", "hiring_text": "招3人", "hiring_count": 3,
+        "publish_time_text": "昨日发布", "published_date": date(2026, 9, 17),
+    })
+    record = record.model_copy(
+        update={"fields": enriched, "payload_hash": calculate_payload_hash(enriched)}
+    )
+    unit_of_work = FakeUnitOfWork()
+    await ingest(ingestor(unit_of_work), batch_request([record]))
+    response = record_response(unit_of_work.parsed_job_records.records[0])
+    restored = ParsedJobRecord.model_validate(response.model_dump(
+        mode="json", by_alias=True, exclude={"record_id", "task_id", "created_at"}
+    ))
+    assert restored.fields == enriched
 
 
 async def test_batch_id_content_change_and_task_mismatch_are_rejected() -> None:

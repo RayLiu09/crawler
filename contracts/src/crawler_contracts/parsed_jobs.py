@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Self
 from uuid import UUID
 
@@ -28,6 +28,25 @@ class ParsedJobFields(ApiModel):
     company_scale_text: str | None = Field(default=None, max_length=120)
     company_financing_text: str | None = Field(default=None, max_length=120)
     job_tags_text: str | None = None
+    # Omit absent 0.5 fields from every serialization, including nested records.
+    # This preserves 0.4 payload/batch hashes, spool replays and stored records.
+    location_text: str | None = Field(
+        default=None, max_length=500, exclude_if=lambda value: value is None
+    )
+    hiring_count: int | None = Field(
+        default=None, ge=0, strict=True, exclude_if=lambda value: value is None
+    )
+    publish_time_text: str | None = Field(
+        default=None, max_length=120, exclude_if=lambda value: value is None
+    )
+    published_date: date | None = Field(default=None, exclude_if=lambda value: value is None)
+    published_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def validate_publication_timezone(self) -> Self:
+        if self.published_at is not None and self.published_at.tzinfo is None:
+            raise ValueError("publishedAt must include a timezone")
+        return self
 
 
 def calculate_payload_hash(fields: ParsedJobFields) -> str:

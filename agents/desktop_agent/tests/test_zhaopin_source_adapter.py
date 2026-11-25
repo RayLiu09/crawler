@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -70,6 +70,23 @@ class FakeElement:
     @property
     def page_source(self) -> str:
         return self._page_source
+
+
+class StaleFakeElement(FakeElement):
+    """Simulates a WebElement detached by an asynchronous list re-render."""
+
+    @property
+    def text(self) -> str:
+        raise BrowserError("stale element reference")
+
+    def find_element(self, _by: str, value: str) -> FakeElement:
+        raise BrowserError("stale element reference")
+
+    def find_elements(self, _by: str, value: str) -> Sequence[FakeElement]:
+        raise BrowserError("stale element reference")
+
+    def get_attribute(self, name: str) -> str | None:
+        raise BrowserError("stale element reference")
 
 
 class FakeDriver(FakeElement):
@@ -249,6 +266,135 @@ def test_adapter_satisfies_shared_source_protocol(tmp_path: Path) -> None:
     assert adapter.source is SourceCode.ZHAOPIN
 
 
+def collect_summary_panel(tmp_path: Path, panel: FakeElement):
+    title = "高薪办公室电话销售+五险一金+双休"
+    panel._children[".//span[contains(@class, 'job-detail-summary__title-text')]"] = (
+        FakeElement(title)
+    )
+    card = FakeElement(
+        attributes={"data-position-id": "CC145756070J40951775812.htm"},
+        children={ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement(title)},
+    )
+    driver = FakeDriver({})
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=%E9%94%80%E5%94%AE"
+    driver._pages[search_url] = FakeElement(child_lists={
+        ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+        ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
+        ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [panel],
+    })
+    records = adapter_with_driver(tmp_path, driver).collect("销售", "上海", 1, RecordingControl())
+    return list(records)[0]
+
+
+def test_supplied_split_summary_preserves_location_headcount_and_publication(
+    tmp_path: Path,
+) -> None:
+    panel = FakeElement(
+        text="10000人以上 · 保险\n54分钟前回复\n今日回复50+次\n7107个在招职位",
+        children={
+            ".//div[contains(@class, 'job-detail-address__bubble')]": FakeElement(
+                "湛江霞山区恒福·时代中心19层"
+            ),
+            ".//ul[contains(@class, 'job-detail-summary__tags')]"
+            "/li[.//img[contains(@src, '/ic-address.')]]/span": FakeElement("湛江·霞山区"),
+            ".//ul[contains(@class, 'job-detail-summary__tags')]"
+            "/li[.//img[contains(@src, '/ic-renshu.')]]/span": FakeElement("招3人"),
+            ".//ul[contains(@class, 'job-detail-summary__tags')]"
+            "/li[.//img[contains(@src, '/ic-time.')]]/span": FakeElement("昨日发布"),
+        },
+        child_lists={ZhaopinSourceAdapter.SUMMARY_TAGS_XPATH: [
+            # Reordered metadata must not turn a time/count into the location.
+            FakeElement("昨日发布"), FakeElement("招3人"), FakeElement("学历不限"),
+            FakeElement("经验不限"), FakeElement("湛江·霞山区"),
+        ]},
+    )
+    record = collect_summary_panel(tmp_path, panel)
+    assert record.fields.location_text == "湛江·霞山区"
+    assert record.fields.address_text == "湛江霞山区恒福·时代中心19层"
+    assert record.region == "上海"  # Query scope cannot substitute for source facts.
+    assert record.fields.hiring_text == "招3人"
+    assert record.fields.hiring_count == 3
+    assert record.fields.publish_time_text == "昨日发布"
+    assert record.fields.published_date == date(2026, 9, 17)
+    assert record.fields.published_at is None
+    assert record.fields.experience_text == "经验不限"
+    assert record.fields.degree_text == "学历不限"
+
+
+def test_summary_missing_facts_does_not_read_company_or_recruiter_metrics(tmp_path: Path) -> None:
+    record = collect_summary_panel(tmp_path, FakeElement(
+        text="10000人以上\n54分钟前回复\n今日回复50+次\n7107个在招职位",
+        children={".//span[contains(@class, 'job-detail-summary__salary')]": FakeElement("5000元")},
+    ))
+    assert record.fields.hiring_text is None
+    assert record.fields.hiring_count is None
+    assert record.fields.publish_time_text is None
+    assert record.fields.published_date is None
+    assert record.fields.location_text is None
+
+
+def test_partial_structured_panel_fills_labeled_summary_fields(tmp_path: Path) -> None:
+    record = collect_summary_panel(tmp_path, FakeElement(
+        text="岗位所在地：湛江·霞山区\n招聘人数\n若干人\n发布时间：昨日发布\n职位描述\n招聘人数：99人",
+        children={".//span[contains(@class, 'job-detail-summary__salary')]": FakeElement("5000元")},
+    ))
+    assert record.fields.location_text == "湛江·霞山区"
+    assert record.fields.hiring_text == "若干人"
+    assert record.fields.hiring_count is None
+    assert record.fields.published_date == date(2026, 9, 17)
+
+
+def test_listing_location_joins_all_location_spans(tmp_path: Path) -> None:
+    card = FakeElement(
+        attributes={"data-position-id": "LOCATION"},
+        children={ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("销售")},
+        child_lists={ZhaopinSourceAdapter.JOB_CARD_LOCATION_XPATH: [
+            FakeElement("湛江"), FakeElement("霞山区"), FakeElement("人民大道"),
+        ]},
+    )
+    listing = adapter_with_driver(tmp_path, FakeDriver({}))._parse_listing(card)
+    assert listing is not None
+    assert listing.location_text == "湛江 霞山区 人民大道"
+
+
+def test_split_panel_waits_for_matching_job_id_even_when_titles_are_identical(
+    tmp_path: Path,
+) -> None:
+    title = "Python 开发工程师"
+    title_xpath = ".//span[contains(@class, 'job-detail-summary__title-text')]"
+
+    def panel(job_id: str, count: str) -> FakeElement:
+        return FakeElement(
+            children={
+                title_xpath: FakeElement(title),
+                ZhaopinSourceAdapter.DETAIL_LINK_XPATH: FakeElement(
+                    attributes={"href": f"https://www.zhaopin.com/jobdetail/{job_id}"}
+                ),
+            },
+            child_lists={ZhaopinSourceAdapter.SUMMARY_TAGS_XPATH: [FakeElement(count)]},
+        )
+
+    card = FakeElement(
+        attributes={"data-position-id": "TARGET"},
+        children={ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement(title)},
+    )
+    page = FakeElement(child_lists={
+        ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+        ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
+        ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [panel("PREVIOUS", "招99人")],
+    })
+    driver = FakeDriver({"https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python": page})
+
+    def switch_panel(_seconds: float) -> None:
+        page._child_lists[ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH] = [
+            panel("TARGET.htm", "招3人")
+        ]
+
+    adapter = adapter_with_driver(tmp_path, driver, detail_timeout_seconds=1, sleeper=switch_panel)
+    record = list(adapter.collect("Python", "上海", 1, RecordingControl()))[0]
+    assert record.fields.hiring_count == 3
+
+
 def test_collect_maps_listing_and_detail_to_parsed_record(tmp_path: Path) -> None:
     listing_url = "http://jobs.zhaopin.com/jobdetail/CC123.htm?ref=list#position"
     normalized_url = "https://jobs.zhaopin.com/jobdetail/CC123.htm?ref=list"
@@ -290,6 +436,8 @@ def test_collect_maps_listing_and_detail_to_parsed_record(tmp_path: Path) -> Non
         "experience_text": "3-5年",
         "degree_text": "本科",
         "hiring_text": "招 2 人",
+        "hiring_count": 2,
+        "location_text": "上海-浦东新区",
         "description": "负责平台服务开发与维护。",
         "skills_text": "Python, PostgreSQL",
         "job_responsibilities_text": None,
@@ -581,6 +729,71 @@ def test_split_search_layout_waits_for_detail_panel_after_card_selection(
     assert len(records) == 1
     assert records[0].fields.description == "负责平台服务开发与维护。"
     assert driver.visited_urls == [search_url]
+
+
+def test_stale_listing_card_does_not_abort_split_panel_collection(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    clicks: list[str] = []
+    stale_card = StaleFakeElement("渲染中的旧卡片", attributes={"data-position-id": "OLD"})
+    fresh_card = FakeElement(
+        attributes={"data-position-id": "FRESH"},
+        on_click=lambda: clicks.append("fresh"),
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 平台工程师"),
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("20K-30K"),
+        },
+    )
+    driver = FakeDriver(
+        {
+            search_url: FakeElement(
+                child_lists={
+                    ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+                    ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [detail_page()],
+                    ZhaopinSourceAdapter.JOB_CARD_XPATH: [stale_card, fresh_card],
+                }
+            )
+        }
+    )
+
+    records = list(
+        adapter_with_driver(tmp_path, driver).collect("Python", "上海", 1, RecordingControl())
+    )
+
+    assert clicks == ["fresh"]
+    assert len(records) == 1
+    assert records[0].source_job_id == "FRESH"
+    assert records[0].fields.description == "负责平台服务开发与维护。"
+    assert driver.visited_urls == [search_url]
+
+
+def test_all_stale_cards_skip_selection_without_raising(tmp_path: Path) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    page = FakeElement(
+        child_lists={
+            ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+            ZhaopinSourceAdapter.JOB_CARD_XPATH: [FakeElement()],
+        }
+    )
+    driver = FakeDriver({search_url: page})
+    driver.get(search_url)
+    adapter = adapter_with_driver(tmp_path, driver)
+    listing = adapter._parse_listing(
+        FakeElement(
+            attributes={"data-position-id": "STALE"},
+            children={
+                ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 平台工程师"),
+            },
+        )
+    )
+    assert listing is not None
+    page._child_lists[ZhaopinSourceAdapter.JOB_CARD_XPATH] = [
+        StaleFakeElement(attributes={"data-position-id": "STALE"})
+    ]
+
+    # The re-rendered list is retried and then skipped instead of aborting.
+    assert adapter._select_listing_card(driver, listing, "STALE") is False
 
 
 def test_current_split_dom_parses_job_card_and_company_meta_without_legacy_classes(

@@ -1,5 +1,24 @@
 # Zhaopin Source Adapter
 
+Version 0.5.0 retains `locationText` independently from the detailed
+`addressText`, captures `hiringText` and an explicit single `hiringCount`, and
+keeps `publishTimeText` with a normalized `publishedDate`. `publishedAt` is
+set only when the source supplies an explicit clock time. Relative dates use
+Beijing time and the same observation timestamp as `collectedAt`; minute/hour
+expressions yield inferred dates, never exact timestamps. Updates, refreshes
+and recruiter reply activity are not publication facts. Missing/range/若干
+headcounts have no numeric value.
+
+The split summary matches icon filename prefixes instead of tag positions,
+with text/label fallbacks. List location spans are combined. Where the detail
+exposes a job ID, card selection waits for that ID (including identical job
+titles); otherwise the modern summary title is checked. Legacy layouts without
+either marker retain their existing readiness behavior.
+
+Absent 0.5 fields are omitted from serialized records to preserve 0.4 record
+hashes, batch receipts and local spool replays. Upgrade the API before agents;
+see `deploy/agent/windows/UPGRADE-0.5.0.md` for deployment and rollback limits.
+
 `ZhaopinSourceAdapter` implements the shared synchronous `SourceAdapter` contract.
 It owns Zhaopin search URL construction, Selenium selectors, list/detail field
 mapping, source URL validation, deterministic payload hashes, browser cleanup,

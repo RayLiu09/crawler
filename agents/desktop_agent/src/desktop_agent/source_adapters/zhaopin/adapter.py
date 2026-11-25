@@ -26,10 +26,16 @@ from desktop_agent.browser.selenium import create_selenium_browser
 
 from ..base import CollectionControl
 from .city_codes import load_city_codes
+from .fields import (
+    HIRING_TEXT_PATTERN,
+    PUBLICATION_TEXT_PATTERN,
+    parse_hiring_count,
+    parse_publish_time,
+)
 
 DEFAULT_MAX_PAGE_LIMIT = 100
 LOGGER = logging.getLogger(__name__)
-HIRING_COUNT_PATTERN = re.compile(r"招\s*\d+\s*人")
+HIRING_COUNT_PATTERN = HIRING_TEXT_PATTERN
 COMPANY_SCALE_PATTERN = re.compile(
     r"(?:少于\s*\d+\s*人|\d+\s*[-至]\s*\d+\s*人|\d+\s*人以上|\d+\s*人以下)"
 )
@@ -40,7 +46,8 @@ DESCRIPTION_SECTION_PATTERN = re.compile(
 PANEL_LABEL_PATTERN = re.compile(
     r"^(?P<label>薪资|薪酬|职位薪资|工资|工作经验|经验要求|经验|学历要求|学历|"
     r"工作职责|"
-    r"工作地址|工作地点|地址|招聘人数|职位描述|岗位描述|岗位职责|工作内容|任职要求|"
+    r"工作地址|工作地点|地址|岗位所在地|所在地区|工作地区|招聘人数|发布时间|发布日期|"
+    r"职位描述|岗位描述|岗位职责|工作内容|任职要求|"
     r"职位要求|任职资格|技能要求|岗位要求|加分项|其他事项|其他)\s*[:：]?\s*(?P<value>.*)$"
 )
 SOURCE_JOB_ID_PATTERNS = (
@@ -143,6 +150,7 @@ class ZhaopinListing:
     company_scale_text: str
     company_industry_text: str
     job_tags_text: str
+    location_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,10 +183,19 @@ class ZhaopinDetail:
     company_financing_text: str = ""
     company_scale_text: str = ""
     company_industry_text: str = ""
+    location_text: str = ""
+    publish_time_text: str = ""
+    observed_at: datetime | None = None
 
 
 class ZhaopinSourceAdapter:
     source: SourceCode = SourceCode.ZHAOPIN
+
+    # The source re-renders its result list asynchronously. Element handles
+    # obtained before a re-render become detached, so card reads are retried a
+    # few times after re-querying the DOM before a listing is skipped.
+    STALE_ELEMENT_RETRY_ATTEMPTS = 3
+    STALE_ELEMENT_RETRY_DELAY_SECONDS = 0.2
 
     # The old sou.zhaopin.com card is retained as the first selector because
     # existing Profiles may still be redirected to that legacy page. The new
@@ -225,6 +242,8 @@ class ZhaopinSourceAdapter:
     )
     JOB_CARD_COMPANY_XPATH = ".//*[contains(@class, 'job-card__company-name')]"
     JOB_CARD_LOCATION_XPATH = ".//*[contains(@class, 'job-card__location')]//span"
+    SUMMARY_TAGS_XPATH = ".//ul[contains(@class, 'job-detail-summary__tags')]//li"
+    DETAIL_LINK_XPATH = ".//a[contains(@class, 'job-detail-view-more')]"
     DETAIL_TITLE_XPATHS = (
         ".//span[contains(@class, 'job-detail-summary__title-text')]",
         "//h1[contains(@class, 'summary-planes__title')]",
@@ -453,13 +472,39 @@ class ZhaopinSourceAdapter:
             page_state=(driver, search_url, control),
         )
         elements = self._listing_elements(driver)
-        listings: list[ZhaopinListing] = []
-        for element in elements:
-            listing = self._parse_listing(element)
-            if listing is None:
-                continue
-            listings.append(listing)
+        listings, stale = self._parse_listing_elements(elements)
+        if stale:
+            # A card detached while the page was being read (lazy render or
+            # selection repaint). Re-query once after the list settles so a
+            # single stale handle cannot drop the whole page.
+            self._sleep(self.STALE_ELEMENT_RETRY_DELAY_SECONDS)
+            retry_listings, _ = self._parse_listing_elements(
+                self._listing_elements(driver)
+            )
+            seen = {listing.source_url for listing in listings}
+            listings.extend(
+                listing
+                for listing in retry_listings
+                if listing.source_url not in seen
+            )
         return ZhaopinListingPage(listings=listings, source_listing_count=len(elements))
+
+    def _parse_listing_elements(
+        self, elements: Sequence[BrowserElement]
+    ) -> tuple[list[ZhaopinListing], bool]:
+        """Parse cards, reporting whether any element went stale mid-read."""
+        listings: list[ZhaopinListing] = []
+        stale = False
+        for element in elements:
+            try:
+                listing = self._parse_listing(element)
+            except BrowserError:
+                stale = True
+                LOGGER.debug("zhaopin listing card went stale while parsing")
+                continue
+            if listing is not None:
+                listings.append(listing)
+        return listings, stale
 
     def _listing_elements(self, driver: BrowserDriver) -> list[BrowserElement]:
         elements: list[BrowserElement] = []
@@ -532,36 +577,25 @@ class ZhaopinSourceAdapter:
         listing: ZhaopinListing,
         control: CollectionControl,
     ) -> ZhaopinDetail:
-        cards = driver.find_elements(By.XPATH, self.JOB_CARD_XPATH)
         listing_id = self.extract_source_job_id(listing.source_url)
-        target = next(
-            (
-                element
-                for element in cards
-                if (
-                    parsed := self._parse_listing(element)
-                ) is not None
-                and (
-                    parsed.source_url == listing.source_url
-                    or (
-                        listing_id is not None
-                        and self.extract_source_job_id(parsed.source_url) == listing_id
-                    )
-                )
-            ),
-            None,
-        )
-        if target is None:
+        if not self._select_listing_card(driver, listing, listing_id):
             LOGGER.warning("zhaopin detail card not found source_url=%s", listing.source_url)
             return ZhaopinDetail()
         try:
-            # Dispatch on the card itself so a nested detail anchor cannot
-            # turn the list selection into a new browser tab.
-            driver.execute_script("arguments[0].click()", target)
-
             def detail_ready() -> bool:
                 panel = self._split_detail_panel(driver)
-                return panel is not None and bool(self._detail_title(panel))
+                if panel is None or not self._detail_title(panel):
+                    return False
+                detail_url = self._safe_attribute(panel, self.DETAIL_LINK_XPATH, "href")
+                detail_id = self.extract_source_job_id(detail_url)
+                if listing_id and not listing_id.startswith("card-") and detail_id:
+                    return re.sub(r"\.html?$", "", listing_id) == re.sub(r"\.html?$", "", detail_id)
+                summary_title = self._safe_text(
+                    panel, ".//span[contains(@class, 'job-detail-summary__title-text')]"
+                )
+                if summary_title:
+                    return re.sub(r"\s+", "", summary_title) == re.sub(r"\s+", "", listing.title)
+                return True
 
             self._wait_until(
                 detail_ready,
@@ -598,6 +632,7 @@ class ZhaopinSourceAdapter:
         return self._parse_detail(driver)
 
     def _parse_detail(self, container: BrowserElement) -> ZhaopinDetail:
+        observed_at = self._clock()
         info_texts = self._texts(
             self._find_elements_any(
                 container,
@@ -637,6 +672,10 @@ class ZhaopinSourceAdapter:
         sections = self._split_description_sections(description)
         financing, scale, industry = self._parse_company_meta_values(company_info)
         return ZhaopinDetail(
+            observed_at=observed_at,
+            publish_time_text=next(
+                (text for text in info_texts if PUBLICATION_TEXT_PATTERN.fullmatch(text)), ""
+            ),
             salary_text=self._safe_text_any(
                 container,
                 (
@@ -743,12 +782,45 @@ class ZhaopinSourceAdapter:
 
     def _parse_split_detail(self, panel: BrowserElement) -> ZhaopinDetail:
         """Parse the current split-panel DOM, then fall back to visible labels."""
-        summary_tags = self._texts(
-            panel.find_elements(
-                By.XPATH,
-                ".//ul[contains(@class, 'job-detail-summary__tags')]//li",
-            )
+        observed_at = self._clock()
+        summary_tags = self._texts(panel.find_elements(By.XPATH, self.SUMMARY_TAGS_XPATH))
+        location = self._summary_value(panel, "address")
+        experience = self._summary_value(panel, "workexp")
+        degree = self._summary_value(panel, "education")
+        hiring = self._summary_value(panel, "renshu") or next(
+            (text for text in summary_tags if HIRING_COUNT_PATTERN.fullmatch(text)), ""
         )
+        publish_time = self._summary_value(panel, "time") or next(
+            (text for text in summary_tags if PUBLICATION_TEXT_PATTERN.fullmatch(text)), ""
+        )
+        location = location or self._summary_label_value(
+            panel, ("岗位所在地", "所在地区", "工作地区")
+        )
+        hiring = hiring or self._summary_label_value(panel, ("招聘人数",))
+        publish_time = publish_time or self._summary_label_value(panel, ("发布时间", "发布日期"))
+        if not location and summary_tags:
+            first_tag = summary_tags[0]
+            if (
+                not HIRING_COUNT_PATTERN.fullmatch(first_tag)
+                and not PUBLICATION_TEXT_PATTERN.fullmatch(first_tag)
+                and not re.search(
+                    r"经验|学历|年|本科|大专|硕士|博士|高中|中专|初中|全职|兼职", first_tag
+                )
+            ):
+                location = first_tag
+        if not experience:
+            experience = next(
+                (text for text in summary_tags if re.search(r"经验|\d+\s*[-至]\s*\d+\s*年", text)),
+                "",
+            )
+        if not degree:
+            degree = next(
+                (
+                    text for text in summary_tags
+                    if re.search(r"学历|本科|大专|硕士|博士|高中|中专|初中", text)
+                ),
+                "",
+            )
         description = self._safe_text_any(
             panel,
             (".//div[contains(@class, 'job-description__content')]",),
@@ -781,16 +853,20 @@ class ZhaopinSourceAdapter:
             structured_sections = self._split_description_sections(description)
             financing, scale, industry = self._parse_company_meta_values(company_values)
             return ZhaopinDetail(
+                observed_at=observed_at,
+                location_text=location,
+                hiring_text=hiring,
+                publish_time_text=publish_time,
                 salary_text=salary,
-                experience_text=summary_tags[1] if len(summary_tags) > 1 else "",
-                degree_text=summary_tags[2] if len(summary_tags) > 2 else "",
+                experience_text=experience,
+                degree_text=degree,
                 description=description,
                 skills_text=", ".join(skills),
                 job_responsibilities_text=structured_sections[0],
                 job_requirements_text=structured_sections[1],
                 qualifications_text=structured_sections[2],
                 other_matters_text=structured_sections[3],
-                address_text=address or (summary_tags[0] if summary_tags else ""),
+                address_text=address or location,
                 company_financing_text=financing,
                 company_scale_text=scale,
                 company_industry_text=industry,
@@ -838,9 +914,6 @@ class ZhaopinSourceAdapter:
         if current_section is not None:
             sections[current_section] = "\n".join(section_lines).strip()
 
-        hiring_text = next((line for line in lines if HIRING_COUNT_PATTERN.search(line)), "")
-        if not hiring_text:
-            hiring_text = values.get("招聘人数", "")
         description_start = next(
             (
                 index
@@ -866,7 +939,16 @@ class ZhaopinSourceAdapter:
             ),
             len(lines),
         )
+        hiring_text = next(
+            (line for line in lines[:description_start] if HIRING_COUNT_PATTERN.search(line)), ""
+        ) or hiring
         return ZhaopinDetail(
+            observed_at=observed_at,
+            location_text=location,
+            publish_time_text=publish_time or next(
+                (line for line in lines[:description_start]
+                 if PUBLICATION_TEXT_PATTERN.fullmatch(line)), ""
+            ),
             salary_text=self._first_value(values, ("薪资", "薪酬", "职位薪资", "工资")),
             hiring_text=hiring_text,
             description="\n".join(lines[description_start:]),
@@ -879,8 +961,79 @@ class ZhaopinSourceAdapter:
         )
 
     @staticmethod
+    def _summary_label_value(panel: BrowserElement, labels: Sequence[str]) -> str:
+        text = ZhaopinSourceAdapter._safe_text(
+            panel, ".//*[contains(@class, 'job-detail-summary__info')]"
+        ) or panel.text
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        pattern = re.compile(r"^(?:" + "|".join(map(re.escape, labels)) + r")\s*[:：]?\s*(.*)$")
+        for index, line in enumerate(lines):
+            if DESCRIPTION_SECTION_PATTERN.fullmatch(line):
+                break
+            match = pattern.fullmatch(line)
+            if match:
+                return match.group(1) or (lines[index + 1] if index + 1 < len(lines) else "")
+        return ""
+
+    @staticmethod
+    def _summary_value(panel: BrowserElement, icon: str) -> str:
+        return ZhaopinSourceAdapter._safe_text(
+            panel,
+            ".//ul[contains(@class, 'job-detail-summary__tags')]"
+            f"/li[.//img[contains(@src, '/ic-{icon}.')]]/span",
+        )
+
+    @staticmethod
     def _first_value(values: Mapping[str, str], labels: Sequence[str]) -> str:
         return next((values[label] for label in labels if values.get(label)), "")
+
+    def _select_listing_card(
+        self,
+        driver: BrowserDriver,
+        listing: ZhaopinListing,
+        listing_id: str | None,
+    ) -> bool:
+        """Select ``listing`` in the split panel, tolerating re-rendered cards.
+
+        The list re-renders asynchronously (lazy detail load, selection
+        repaint), detaching WebElement handles returned moments earlier. Each
+        attempt re-queries the DOM and skips cards that go stale mid-parse so
+        one detached handle cannot abort the whole collection. Dispatch on the
+        card itself so a nested detail anchor cannot open a new browser tab.
+        """
+        for attempt in range(self.STALE_ELEMENT_RETRY_ATTEMPTS):
+            stale = False
+            for element in driver.find_elements(By.XPATH, self.JOB_CARD_XPATH):
+                try:
+                    parsed = self._parse_listing(element)
+                except BrowserError:
+                    stale = True
+                    LOGGER.debug("zhaopin listing card went stale while matching")
+                    continue
+                if parsed is None or not self._listing_matches(parsed, listing, listing_id):
+                    continue
+                try:
+                    driver.execute_script("arguments[0].click()", element)
+                except BrowserError:
+                    stale = True
+                    break
+                return True
+            if not stale:
+                return False
+            if attempt + 1 < self.STALE_ELEMENT_RETRY_ATTEMPTS:
+                self._sleep(self.STALE_ELEMENT_RETRY_DELAY_SECONDS)
+        return False
+
+    @staticmethod
+    def _listing_matches(
+        parsed: ZhaopinListing,
+        listing: ZhaopinListing,
+        listing_id: str | None,
+    ) -> bool:
+        return parsed.source_url == listing.source_url or (
+            listing_id is not None
+            and ZhaopinSourceAdapter.extract_source_job_id(parsed.source_url) == listing_id
+        )
 
     def _has_split_search_layout(self, driver: BrowserDriver) -> bool:
         return bool(driver.find_elements(By.XPATH, self.JOB_LIST_PANEL_XPATH))
@@ -965,7 +1118,12 @@ class ZhaopinSourceAdapter:
         if is_new_card:
             skills = self._texts(element.find_elements(By.XPATH, self.JOB_CARD_SKILL_XPATH))
             company_name = self._safe_text(element, self.JOB_CARD_COMPANY_XPATH)
-            location = self._safe_text(element, self.JOB_CARD_LOCATION_XPATH)
+            location_parts = self._texts(
+                element.find_elements(By.XPATH, self.JOB_CARD_LOCATION_XPATH)
+            )
+            location = " ".join(location_parts) or self._safe_text(
+                element, self.JOB_CARD_LOCATION_XPATH
+            )
             degree = skills[0] if skills and skills[0] in {"大专", "本科", "硕士", "博士"} else ""
             experience = next(
                 (value for value in skills if re.fullmatch(r"\d+[-至]\d+年|经验不限", value)),
@@ -977,6 +1135,7 @@ class ZhaopinSourceAdapter:
                 title=title,
                 company_name=company_name,
                 address_text=location,
+                location_text=location,
                 salary_text=self._safe_text(element, self.JOB_CARD_SALARY_XPATH),
                 experience_text=experience,
                 degree_text=degree,
@@ -1002,6 +1161,7 @@ class ZhaopinSourceAdapter:
                 element, ".//div[contains(@class, 'companyinfo__top')]/a"
             ),
             address_text=other_items[0] if len(other_items) > 0 else "",
+            location_text=other_items[0] if len(other_items) > 0 else "",
             experience_text=other_items[1] if len(other_items) > 1 else "",
             degree_text=other_items[2] if len(other_items) > 2 else "",
             salary_text=self._safe_text(
@@ -1023,6 +1183,8 @@ class ZhaopinSourceAdapter:
         listing: ZhaopinListing,
         detail: ZhaopinDetail,
     ) -> ParsedJobRecord:
+        collected_at = detail.observed_at or self._clock()
+        published_date, published_at = parse_publish_time(detail.publish_time_text, collected_at)
         fields = ParsedJobFields(
             title=listing.title[:300],
             company_name=self._limited(listing.company_name, 300),
@@ -1033,6 +1195,11 @@ class ZhaopinSourceAdapter:
             ),
             degree_text=self._limited(listing.degree_text or detail.degree_text, 120),
             hiring_text=self._limited(detail.hiring_text, 120),
+            location_text=self._limited(detail.location_text or listing.location_text, 500),
+            hiring_count=parse_hiring_count(detail.hiring_text),
+            publish_time_text=self._limited(detail.publish_time_text, 120),
+            published_date=published_date,
+            published_at=published_at,
             description=detail.description or None,
             skills_text=detail.skills_text or None,
             job_responsibilities_text=detail.job_responsibilities_text or None,
@@ -1058,7 +1225,7 @@ class ZhaopinSourceAdapter:
             region=region,
             page=page,
             fields=fields,
-            collected_at=self._clock(),
+            collected_at=collected_at,
             payload_hash=calculate_payload_hash(fields),
         )
 

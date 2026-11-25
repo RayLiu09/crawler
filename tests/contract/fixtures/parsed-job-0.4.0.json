@@ -1,0 +1,29 @@
+{
+  "source": "zhaopin",
+  "sourceJobId": "LEGACY",
+  "sourceUrl": "https://www.zhaopin.com/jobdetail/LEGACY",
+  "keyword": "销售",
+  "region": "湛江",
+  "page": 1,
+  "fields": {
+    "title": "Legacy job",
+    "companyName": "Example Co",
+    "addressText": null,
+    "salaryText": null,
+    "experienceText": null,
+    "degreeText": null,
+    "hiringText": "招3人",
+    "description": null,
+    "skillsText": null,
+    "jobResponsibilitiesText": null,
+    "jobRequirementsText": null,
+    "qualificationsText": null,
+    "otherMattersText": null,
+    "companyIndustryText": null,
+    "companyScaleText": null,
+    "companyFinancingText": null,
+    "jobTagsText": null
+  },
+  "collectedAt": "2026-11-19T16:10:00Z",
+  "payloadHash": "sha256:e88100de39a6d473f738c9bcfb24089f8ec7de74f3a223e742995a4061c424b3"
+}

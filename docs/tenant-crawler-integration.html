@@ -157,6 +157,7 @@ Authorization: Bearer &lt;caller-token&gt;
     <div class="grid">
       <div class="box green"><strong>拉取策略</strong><ol><li>先读 Job，确认 <code>status</code> 与 <code>processedCount</code>。</li><li>以 <code>limit=200</code> 首次请求；持久化 <code>nextCursor</code>，直到返回 <code>null</code>。</li><li>按 <code>recordId</code> 或 <code>sourceUrl + payloadHash</code> 做本地幂等，不用 <code>collectedAt</code> 排序。</li></ol></div>
       <div class="box blue"><strong>字段使用</strong><span class="muted"><code>fields</code> 是业务可消费内容；<code>sourceJobId/sourceUrl</code> 用于来源追溯；<code>keyword/region/page</code> 保留查询上下文；<code>payloadHash</code> 用于内容去重和变更检测。引擎不提供跨来源 canonical job。</span></div>
+      <div class="box blue"><strong>0.5.0 岗位指标</strong><span class="muted"><code>locationText</code> 为岗位所在地原文，<code>addressText</code> 保留工作地址；<code>region</code> 仅为搜索条件。<code>hiringText</code> 保留人数原文，<code>hiringCount</code> 仅包含明确的单一人数，若干、范围和缺失不按 0 或 1 统计。<code>publishTimeText</code> 保留来源发布时间文本，<code>publishedDate</code> 为发布日，相对时间以采集北京时间换算；小时、分钟表达式换算的日期属于推算值。只有来源提供明确时刻才返回带时区的 <code>publishedAt</code>，<code>collectedAt</code> 仍表示采集时间。缺失的新增字段在 JSON 中省略；调用方应兼容可选字段，不将发布日期理解为已核实的历史首次发布日期。</span></div>
     </div>
 
     <h2>4. 事件通知（可选）与可靠性</h2>
