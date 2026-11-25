@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from crawler_contracts.common import SourceCode
 from crawler_contracts.parsed_jobs import calculate_payload_hash
-from desktop_agent.browser.errors import BrowserError
+from desktop_agent.browser.errors import BrowserError, BrowserTimeoutError
 from desktop_agent.source_adapters import SourceAdapter
 from desktop_agent.source_adapters.zhaopin import (
     BrowserProfileInvalid,
@@ -1570,3 +1570,189 @@ def test_human_intervention_poll_interval_cannot_exceed_timeout(tmp_path: Path) 
             human_intervention_timeout_seconds=1,
             human_intervention_poll_seconds=2,
         )
+
+
+def test_listing_title_comes_from_detail_link_instead_of_card_blob(
+    tmp_path: Path,
+) -> None:
+    listing_url = "https://www.zhaopin.com/jobdetail/BLOB-CARD"
+    blob = (
+        "5000-6000元\n本科\n图文平台\n小红书\n知乎\n"
+        "内容运营\n佛山鸿远电子商务有限公司\n佛山 高明 荷城"
+    )
+    card = FakeElement(
+        text=blob,
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("5000-6000元"),
+            ZhaopinSourceAdapter.JOB_CARD_COMPANY_XPATH: FakeElement(
+                "佛山鸿远电子商务有限公司"
+            ),
+            ZhaopinSourceAdapter.JOB_CARD_LINK_XPATH: FakeElement(
+                "内容运营", attributes={"href": listing_url}
+            ),
+        },
+    )
+
+    listing = adapter_with_driver(tmp_path, FakeDriver({}))._parse_listing(card)
+
+    assert listing is not None
+    assert listing.title == "内容运营"
+    assert listing.source_url == listing_url
+
+
+def test_listing_blob_without_title_selector_is_skipped(tmp_path: Path) -> None:
+    blob = "5000-6000元\n本科\n内容运营\n佛山鸿远电子商务有限公司"
+    card = FakeElement(
+        text=blob,
+        attributes={"data-position-id": "NO-TITLE"},
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("5000-6000元"),
+        },
+    )
+
+    listing = adapter_with_driver(tmp_path, FakeDriver({}))._parse_listing(card)
+
+    # The multi-field blob must never be recorded as the title.
+    assert listing is None
+
+
+def test_card_only_identity_waits_for_matching_detail_panel(tmp_path: Path) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    title_xpath = ".//span[contains(@class, 'job-detail-summary__title-text')]"
+    card = FakeElement(
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("内容运营"),
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("5000-6000元"),
+        },
+    )
+    stale_panel = FakeElement(
+        children={
+            title_xpath: FakeElement("其他岗位"),
+            ".//div[contains(@class, 'job-description__content')]": FakeElement(
+                "错误描述"
+            ),
+        },
+    )
+    correct_panel = FakeElement(
+        children={
+            title_xpath: FakeElement("内容运营"),
+            ".//div[contains(@class, 'job-description__content')]": FakeElement(
+                "正确描述"
+            ),
+        },
+    )
+    page = FakeElement(
+        child_lists={
+            ZhaopinSourceAdapter.JOB_LIST_PANEL_XPATH: [FakeElement()],
+            ZhaopinSourceAdapter.JOB_CARD_XPATH: [card],
+            ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH: [stale_panel],
+        }
+    )
+
+    def switch_panel(_seconds: float) -> None:
+        page._child_lists[ZhaopinSourceAdapter.JOB_DETAIL_PANEL_XPATH] = [
+            correct_panel
+        ]
+
+    driver = FakeDriver({search_url: page})
+    adapter = adapter_with_driver(
+        tmp_path, driver, detail_timeout_seconds=1, sleeper=switch_panel
+    )
+
+    records = list(adapter.collect("Python", "上海", 1, RecordingControl()))
+
+    assert len(records) == 1
+    assert records[0].fields.title == "内容运营"
+    assert records[0].fields.description == "正确描述"
+    assert records[0].fields.description != "错误描述"
+
+
+class _DetailTimeoutDriver(FakeDriver):
+    def __init__(self, pages: dict[str, FakeElement], failing_url: str) -> None:
+        super().__init__(pages)
+        self._failing_url = failing_url
+
+    def get(self, url: str) -> None:
+        if url == self._failing_url:
+            raise BrowserTimeoutError("page load timed out")
+        super().get(url)
+
+
+def test_legacy_detail_navigation_timeout_keeps_listing_without_stale_detail(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    listing_url = "https://jobs.zhaopin.com/jobdetail/TIMEOUT"
+    driver = _DetailTimeoutDriver(
+        {
+            search_url: FakeElement(
+                child_lists={
+                    ZhaopinSourceAdapter.LIST_ITEM_XPATH: [listing_item(listing_url)]
+                }
+            )
+        },
+        failing_url=ZhaopinSourceAdapter.normalize_job_url(listing_url) or "",
+    )
+
+    records = list(
+        adapter_with_driver(tmp_path, driver).collect("Python", "上海", 1, RecordingControl())
+    )
+
+    assert len(records) == 1
+    assert records[0].source_job_id == "TIMEOUT"
+    assert records[0].fields.title == "Python 开发工程师"
+    assert records[0].fields.description is None
+
+
+def test_listing_elements_dedupe_same_job_across_overlapping_xpaths(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    listing_url = "https://www.zhaopin.com/jobdetail/DUP"
+    page = FakeElement(
+        child_lists={
+            ZhaopinSourceAdapter.LIST_ITEM_XPATH: [listing_item(listing_url)],
+            "//*[contains(@class, 'joblist-box__item')]": [listing_item(listing_url)],
+        }
+    )
+    driver = FakeDriver({search_url: page})
+    driver.get(search_url)
+    adapter = adapter_with_driver(tmp_path, driver)
+
+    elements = adapter._listing_elements(driver)
+    deduped = adapter._dedupe_listing_elements(elements)
+
+    assert len(elements) == 2
+    assert len(deduped) == 1
+
+
+def test_empty_marker_does_not_hide_cards_that_render_after_wait(
+    tmp_path: Path,
+) -> None:
+    search_url = "https://www.zhaopin.com/jobs?jl=538&pageMode=search&kw=Python"
+    listing_url = "https://jobs.zhaopin.com/jobdetail/LATE"
+    page = FakeElement(
+        child_lists={ZhaopinSourceAdapter.EMPTY_XPATH: [FakeElement()]}
+    )
+
+    def reveal(_seconds: float) -> None:
+        if ZhaopinSourceAdapter.LIST_ITEM_XPATH not in page._child_lists:
+            page._child_lists[ZhaopinSourceAdapter.LIST_ITEM_XPATH] = [
+                listing_item(listing_url)
+            ]
+
+    driver = FakeDriver(
+        {
+            search_url: page,
+            ZhaopinSourceAdapter.normalize_job_url(listing_url): detail_page(),
+        }
+    )
+
+    records = list(
+        adapter_with_driver(tmp_path, driver, sleeper=reveal).collect(
+            "Python", "上海", 1, RecordingControl()
+        )
+    )
+
+    assert len(records) == 1
+    assert records[0].source_job_id == "LATE"

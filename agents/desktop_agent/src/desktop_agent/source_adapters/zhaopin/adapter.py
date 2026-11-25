@@ -197,6 +197,21 @@ class ZhaopinSourceAdapter:
     STALE_ELEMENT_RETRY_ATTEMPTS = 3
     STALE_ELEMENT_RETRY_DELAY_SECONDS = 0.2
 
+    # A loading placeholder can satisfy the empty-marker wait before the result
+    # grid renders, and a re-render can momentarily drop every card. Re-query a
+    # few times before declaring the page empty so the first page of a real
+    # search is not mistaken for "no results".
+    EMPTY_RESULT_CONFIRM_ATTEMPTS = 3
+    EMPTY_RESULT_CONFIRM_DELAY_SECONDS = 0.5
+
+    POSITION_ID_ATTRIBUTES = (
+        "data-position-id",
+        "data-positionid",
+        "data-job-id",
+        "data-jobid",
+        "data-id",
+    )
+
     # The old sou.zhaopin.com card is retained as the first selector because
     # existing Profiles may still be redirected to that legacy page. The new
     # www.zhaopin.com/jobs page has changed card markup, so detail links are a
@@ -234,6 +249,18 @@ class ZhaopinSourceAdapter:
         ".//*[contains(concat(' ', normalize-space(@class), ' '), "
         "' job-card__title-clamp ')]"
         "//*[contains(concat(' ', normalize-space(@class), ' '), ' vue-clamp__text ')]"
+    )
+    # The card title markup varies across Vue builds. Fall back to the clamp
+    # wrapper itself and to the plain title class before giving up on the card.
+    JOB_CARD_TITLE_XPATHS = (
+        JOB_CARD_TITLE_XPATH,
+        ".//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' job-card__title-clamp ')]",
+        ".//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' job-card__title ')]",
+    )
+    JOB_CARD_LINK_XPATH = (
+        ".//a[contains(@href, '/jobdetail/') or contains(@href, 'positionId=')]"
     )
     JOB_CARD_SALARY_XPATH = ".//*[contains(@class, 'job-card__salary')]"
     JOB_CARD_SKILL_XPATH = (
@@ -471,15 +498,28 @@ class ZhaopinSourceAdapter:
             failure_message="Zhaopin listing page did not expose a list or empty marker",
             page_state=(driver, search_url, control),
         )
-        elements = self._listing_elements(driver)
+        elements = self._dedupe_listing_elements(self._listing_elements(driver))
+        if not elements:
+            # The wait above is satisfied by an empty marker, but a loading
+            # skeleton (or a re-render) can report empty before cards appear.
+            # Give the grid a brief chance to populate before reporting an
+            # empty page.
+            for _ in range(self.EMPTY_RESULT_CONFIRM_ATTEMPTS):
+                self._sleep(self.EMPTY_RESULT_CONFIRM_DELAY_SECONDS)
+                elements = self._dedupe_listing_elements(
+                    self._listing_elements(driver)
+                )
+                if elements:
+                    break
         listings, stale = self._parse_listing_elements(elements)
+        listings = self._dedupe_listings(listings)
         if stale:
             # A card detached while the page was being read (lazy render or
             # selection repaint). Re-query once after the list settles so a
             # single stale handle cannot drop the whole page.
             self._sleep(self.STALE_ELEMENT_RETRY_DELAY_SECONDS)
             retry_listings, _ = self._parse_listing_elements(
-                self._listing_elements(driver)
+                self._dedupe_listing_elements(self._listing_elements(driver))
             )
             seen = {listing.source_url for listing in listings}
             listings.extend(
@@ -507,8 +547,11 @@ class ZhaopinSourceAdapter:
         return listings, stale
 
     def _listing_elements(self, driver: BrowserDriver) -> list[BrowserElement]:
-        elements: list[BrowserElement] = []
-        seen: set[int] = set()
+        """Return raw candidate elements; duplicates are possible and are
+        collapsed by :meth:`_dedupe_listing_elements` once the page settles.
+        This is called on every poll of the listing wait, so it deliberately
+        avoids per-element attribute reads.
+        """
         has_job_list_panel = bool(
             driver.find_elements(By.XPATH, self.JOB_LIST_PANEL_XPATH)
         )
@@ -527,33 +570,70 @@ class ZhaopinSourceAdapter:
             if panel_links:
                 return list(panel_links)
 
-        panel_links = driver.find_elements(By.XPATH, self.JOB_LIST_LINK_XPATH)
-        for element in panel_links:
-            marker = id(element)
-            if marker not in seen:
-                seen.add(marker)
-                elements.append(element)
-        for element in driver.find_elements(By.XPATH, self.JOB_CARD_XPATH):
-            marker = id(element)
-            if marker not in seen:
-                seen.add(marker)
-                elements.append(element)
+        elements: list[BrowserElement] = []
+        elements.extend(driver.find_elements(By.XPATH, self.JOB_LIST_LINK_XPATH))
+        elements.extend(driver.find_elements(By.XPATH, self.JOB_CARD_XPATH))
         for xpath in self.LIST_ITEM_XPATHS:
-            for element in driver.find_elements(By.XPATH, xpath):
-                marker = id(element)
-                if marker not in seen:
-                    seen.add(marker)
-                    elements.append(element)
+            elements.extend(driver.find_elements(By.XPATH, xpath))
         # On the split-panel page, links outside the left list can point to
         # recommendations or the currently displayed detail. Only use the
         # page-wide link fallback for legacy pages without a list panel.
         if not has_job_list_panel:
-            for element in driver.find_elements(By.XPATH, self.LIST_LINK_XPATH):
-                marker = id(element)
-                if marker not in seen:
-                    seen.add(marker)
-                    elements.append(element)
+            elements.extend(driver.find_elements(By.XPATH, self.LIST_LINK_XPATH))
         return elements
+
+    def _dedupe_listing_elements(
+        self, elements: Sequence[BrowserElement]
+    ) -> list[BrowserElement]:
+        """Collapse overlapping xpaths that resolve to the same job.
+
+        ``id(element)`` cannot dedupe across separate ``find_elements`` calls
+        (each call wraps the same DOM node in a new object), so identity is the
+        resolved job key: the detail href or the position id.
+        """
+        unique: list[BrowserElement] = []
+        seen_keys: set[str] = set()
+        seen_objects: set[int] = set()
+        for element in elements:
+            key = self._listing_identity(element)
+            if key is None:
+                marker = id(element)
+                if marker in seen_objects:
+                    continue
+                seen_objects.add(marker)
+            elif key in seen_keys:
+                continue
+            else:
+                seen_keys.add(key)
+            unique.append(element)
+        return unique
+
+    def _listing_identity(self, element: BrowserElement) -> str | None:
+        href = self._safe_direct_attribute(element, "href")
+        source_url = self.normalize_job_url(href)
+        if source_url is not None:
+            return source_url
+        source_url = self.normalize_job_url(
+            self._safe_attribute(element, self.TITLE_LINK_XPATH, "href")
+        )
+        if source_url is not None:
+            return source_url
+        for name in self.POSITION_ID_ATTRIBUTES:
+            value = self._safe_direct_attribute(element, name)
+            if value:
+                return f"position:{value}"
+        return None
+
+    @staticmethod
+    def _dedupe_listings(listings: Sequence[ZhaopinListing]) -> list[ZhaopinListing]:
+        unique: list[ZhaopinListing] = []
+        seen: set[str] = set()
+        for listing in listings:
+            if listing.source_url in seen:
+                continue
+            seen.add(listing.source_url)
+            unique.append(listing)
+        return unique
 
     def _empty_markers(self, driver: BrowserDriver) -> list[BrowserElement]:
         return [
@@ -584,7 +664,10 @@ class ZhaopinSourceAdapter:
         try:
             def detail_ready() -> bool:
                 panel = self._split_detail_panel(driver)
-                if panel is None or not self._detail_title(panel):
+                if panel is None:
+                    return False
+                panel_title = self._detail_title(panel)
+                if not panel_title:
                     return False
                 detail_url = self._safe_attribute(panel, self.DETAIL_LINK_XPATH, "href")
                 detail_id = self.extract_source_job_id(detail_url)
@@ -594,7 +677,15 @@ class ZhaopinSourceAdapter:
                     panel, ".//span[contains(@class, 'job-detail-summary__title-text')]"
                 )
                 if summary_title:
-                    return re.sub(r"\s+", "", summary_title) == re.sub(r"\s+", "", listing.title)
+                    return self._normalized_title(summary_title) == self._normalized_title(
+                        listing.title
+                    )
+                if listing_id and listing_id.startswith("card-"):
+                    # Card-only identities have no job id to compare, so a
+                    # titled panel is not proof it belongs to this card. Wait
+                    # for the title to match instead of recording the detail
+                    # left over from the previously selected card.
+                    return self._titles_match(panel_title, listing.title)
                 return True
 
             self._wait_until(
@@ -617,8 +708,12 @@ class ZhaopinSourceAdapter:
         control: CollectionControl,
     ) -> ZhaopinDetail:
         try:
-            with suppress(BrowserTimeoutError):
-                driver.get(source_url)
+            # Do not swallow a navigation timeout here: a timed-out load can
+            # leave the previous job's page in place, and the "title present"
+            # wait below would then accept that stale page as this listing's
+            # detail. A caught timeout yields empty detail instead of the
+            # wrong job's detail.
+            driver.get(source_url)
             self._ensure_page_ready(driver, control=control, return_url=source_url)
             self._wait_until(
                 lambda: self._detail_title(driver) != "",
@@ -1053,37 +1148,48 @@ class ZhaopinSourceAdapter:
             return ""
 
     def _parse_listing(self, element: BrowserElement) -> ZhaopinListing | None:
+        card_title = self._clean_title(
+            self._safe_text_any(element, self.JOB_CARD_TITLE_XPATHS)
+        )
+        salary = self._safe_text(element, self.JOB_CARD_SALARY_XPATH)
         is_new_card = bool(
-            self._safe_text(element, self.JOB_CARD_TITLE_XPATH)
-            or self._safe_text(element, self.JOB_CARD_SALARY_XPATH)
+            card_title
+            or salary
+            or self._safe_text(element, self.JOB_CARD_COMPANY_XPATH)
+            or self._safe_text(element, self.JOB_CARD_LOCATION_XPATH)
         )
-        title = (
-            self._safe_text(element, self.JOB_CARD_TITLE_XPATH)
-            if is_new_card
-            else self._safe_text(element, self.TITLE_LINK_XPATH)
-        )
-        href = (
-            self._safe_attribute(element, self.TITLE_LINK_XPATH, "href")
-            if not is_new_card
-            else self._safe_direct_attribute(element, "href")
-        )
+        if is_new_card:
+            title = card_title
+            if not title:
+                # The title selector can miss a card variant; the nested detail
+                # anchor still carries the clean title text.
+                title = self._clean_title(
+                    self._safe_text(element, self.JOB_CARD_LINK_XPATH)
+                )
+            href = self._safe_direct_attribute(
+                element, "href"
+            ) or self._safe_attribute(element, self.JOB_CARD_LINK_XPATH, "href")
+        else:
+            title = self._clean_title(self._safe_text(element, self.TITLE_LINK_XPATH))
+            href = self._safe_attribute(element, self.TITLE_LINK_XPATH, "href")
+            if not title or not href:
+                title = title or self._clean_title(
+                    self._safe_text(element, self.JOB_CARD_LINK_XPATH)
+                )
+                href = href or self._safe_attribute(
+                    element, self.JOB_CARD_LINK_XPATH, "href"
+                )
         if not title:
-            # New search cards can expose the job detail anchor as the element
-            # returned by LIST_LINK_XPATH rather than as a child of a card.
-            title = (element.text or "").strip()
-            href = self._safe_direct_attribute(element, "href")
+            # A legacy detail-link element exposes the job title as the anchor's
+            # own text. A multi-line card blob is rejected by _clean_title.
+            title = self._clean_title(element.text or "")
+            href = href or self._safe_direct_attribute(element, "href")
         source_url = self.normalize_job_url(href)
         if source_url is None and is_new_card:
             position_id = next(
                 (
                     self._safe_direct_attribute(element, name)
-                    for name in (
-                        "data-position-id",
-                        "data-positionid",
-                        "data-job-id",
-                        "data-jobid",
-                        "data-id",
-                    )
+                    for name in self.POSITION_ID_ATTRIBUTES
                     if self._safe_direct_attribute(element, name)
                 ),
                 "",
@@ -1100,7 +1206,7 @@ class ZhaopinSourceAdapter:
                 identity = "|".join(
                     (
                         title,
-                        self._safe_text(element, self.JOB_CARD_SALARY_XPATH),
+                        salary,
                         self._safe_text(element, self.JOB_CARD_COMPANY_XPATH),
                         self._safe_text(element, self.JOB_CARD_LOCATION_XPATH),
                         "\n".join(
@@ -1136,7 +1242,7 @@ class ZhaopinSourceAdapter:
                 company_name=company_name,
                 address_text=location,
                 location_text=location,
-                salary_text=self._safe_text(element, self.JOB_CARD_SALARY_XPATH),
+                salary_text=salary,
                 experience_text=experience,
                 degree_text=degree,
                 company_financing_text="",
@@ -1428,6 +1534,34 @@ class ZhaopinSourceAdapter:
         return [
             text for element in elements if (text := (element.text or "").strip())
         ]
+
+    @staticmethod
+    def _clean_title(value: str) -> str:
+        """Return a single-line title, rejecting multi-field card text.
+
+        Some card variants leave no selector for the title. Falling back to the
+        card's full text then concatenates salary, tags, company and location
+        into ``title`` (e.g. ``"5000-6000元\\n本科\\n内容运营\\n佛山..."``). Treat a
+        multi-line blob as "no title" so the caller can use a link anchor or
+        skip the card rather than record corrupted data.
+        """
+        stripped = value.strip()
+        if not stripped or "\n" in stripped or "\r" in stripped:
+            return ""
+        return stripped
+
+    @staticmethod
+    def _normalized_title(value: str) -> str:
+        return re.sub(r"\s+", "", value)
+
+    @classmethod
+    def _titles_match(cls, left: str, right: str) -> bool:
+        norm_left = cls._normalized_title(left)
+        norm_right = cls._normalized_title(right)
+        if not norm_left or not norm_right:
+            return False
+        # Card titles are frequently truncated, so allow containment either way.
+        return norm_left == norm_right or norm_left in norm_right or norm_right in norm_left
 
     @staticmethod
     def _line_list(value: str) -> str:
