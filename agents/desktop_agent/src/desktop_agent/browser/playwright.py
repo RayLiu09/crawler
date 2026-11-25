@@ -176,7 +176,7 @@ class PlaywrightElement:
     @property
     def text(self) -> str:
         try:
-            return self._worker.submit(self._handle.inner_text)
+            return self._worker.submit(self._handle.inner_text) or ""
         except PlaywrightError as error:
             raise BrowserError("element text is unavailable") from error
 
@@ -258,7 +258,7 @@ class PlaywrightDriver:
     @property
     def text(self) -> str:
         try:
-            return self._worker.submit(lambda: self._page.inner_text("body"))
+            return self._worker.submit(lambda: self._page.inner_text("body")) or ""
         except PlaywrightError as error:
             raise BrowserError("page text is unavailable") from error
 

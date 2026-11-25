@@ -89,6 +89,14 @@ class StaleFakeElement(FakeElement):
         raise BrowserError("stale element reference")
 
 
+class NoneTextFakeElement(FakeElement):
+    """Simulates chromedriver returning a null GET_ELEMENT_TEXT value."""
+
+    @property
+    def text(self) -> str:
+        return None  # type: ignore[return-value]
+
+
 class FakeDriver(FakeElement):
     def __init__(self, pages: dict[str, FakeElement]) -> None:
         super().__init__()
@@ -893,6 +901,25 @@ def test_current_split_dom_parses_job_card_and_company_meta_without_legacy_class
     assert records[0].fields.company_financing_text == "已上市"
     assert records[0].fields.company_scale_text == "10000人以上"
     assert records[0].fields.company_industry_text == "软件/IT服务、软件/IT服务、人工智能"
+
+
+def test_null_engine_text_does_not_break_card_identity(tmp_path: Path) -> None:
+    card = FakeElement(
+        children={
+            ZhaopinSourceAdapter.JOB_CARD_TITLE_XPATH: FakeElement("Python 后端工程师"),
+            ZhaopinSourceAdapter.JOB_CARD_SALARY_XPATH: FakeElement("9000-13000元"),
+        },
+        child_lists={
+            ZhaopinSourceAdapter.JOB_CARD_SKILL_XPATH: [NoneTextFakeElement()],
+        },
+    )
+
+    listing = adapter_with_driver(tmp_path, FakeDriver({}))._parse_listing(card)
+
+    assert listing is not None
+    assert listing.title == "Python 后端工程师"
+    assert listing.source_url.startswith("https://www.zhaopin.com/jobdetail/card-")
+    assert listing.job_tags_text == ""
 
 
 def test_current_job_card_without_href_or_position_id_gets_stable_identity(

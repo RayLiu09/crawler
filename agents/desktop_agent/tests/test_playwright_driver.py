@@ -144,6 +144,12 @@ def test_element_reads_text_and_attribute() -> None:
     assert element.get_attribute("href") == "/job/1"
 
 
+def test_element_text_normalizes_null_engine_value() -> None:
+    element = PlaywrightElement(InlineWorker(), FakeHandle(text=None))  # type: ignore[arg-type]
+
+    assert element.text == ""
+
+
 def test_element_missing_child_raises_browser_error() -> None:
     element = PlaywrightElement(InlineWorker(), FakeHandle())
 

@@ -1070,7 +1070,7 @@ class ZhaopinSourceAdapter:
         if not title:
             # New search cards can expose the job detail anchor as the element
             # returned by LIST_LINK_XPATH rather than as a child of a card.
-            title = element.text.strip()
+            title = (element.text or "").strip()
             href = self._safe_direct_attribute(element, "href")
         source_url = self.normalize_job_url(href)
         if source_url is None and is_new_card:
@@ -1425,7 +1425,9 @@ class ZhaopinSourceAdapter:
 
     @staticmethod
     def _texts(elements: Sequence[BrowserElement]) -> list[str]:
-        return [text for element in elements if (text := element.text.strip())]
+        return [
+            text for element in elements if (text := (element.text or "").strip())
+        ]
 
     @staticmethod
     def _line_list(value: str) -> str:

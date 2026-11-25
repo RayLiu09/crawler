@@ -54,7 +54,9 @@ class SeleniumElement:
     @property
     def text(self) -> str:
         try:
-            return self._element.text
+            # Some chromedriver builds return a null GET_ELEMENT_TEXT value,
+            # which surfaces as None even though Selenium types it as str.
+            return self._element.text or ""
         except WebDriverException as error:
             raise BrowserError("element text is unavailable") from error
 
@@ -121,7 +123,7 @@ class SeleniumDriver:
     @property
     def text(self) -> str:
         try:
-            return self._driver.find_element(By.TAG_NAME, "body").text
+            return self._driver.find_element(By.TAG_NAME, "body").text or ""
         except WebDriverException as error:
             raise BrowserError("page text is unavailable") from error
 
